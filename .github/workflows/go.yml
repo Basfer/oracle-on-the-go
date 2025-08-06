@@ -29,7 +29,7 @@ jobs:
 
     - name: Build
       run: |
-        GOOS=linux GOARCH=amd64 go build -v -o gocl .
+        CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -ldflags '-extldflags "-static"' -v -o gocl .
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -57,7 +57,7 @@ jobs:
 
     - name: Build
       run: |
-        GOOS=linux GOARCH=arm64 go build -v -o gocl .
+        CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -ldflags '-extldflags "-static"' -v -o gocl .
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
