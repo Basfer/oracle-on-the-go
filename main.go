@@ -25,135 +25,169 @@ type Config struct {
 }
 
 func main() {
-	// ... существующий код инициализации ...
+	var config Config
+	config.params = make(map[string]string)
 
-	// Получаем SQL команды
-	var queries []string
-	var err error
+	flag.StringVar(&config.inputFile, "input", "", "SQL file to execute")
+	flag.StringVar(&config.inputFile, "i", "", "SQL file to execute (shorthand)")
 
+	flag.StringVar(&config.queryCode, "code", "", "SQL query to execute")
+	flag.StringVar(&config.queryCode, "c", "", "SQL query to execute (shorthand)")
+
+	flag.StringVar(&config.outputFile, "output", "", "Output file name")
+	flag.StringVar(&config.outputFile, "o", "", "Output file name (shorthand)")
+
+	flag.StringVar(&config.format, "format", "", "Output format (tsv, csv, jira, html, xls, xlsx)")
+	flag.StringVar(&config.format, "f", "", "Output format (tsv, csv, jira, html, xls, xlsx) (shorthand)")
+
+	flag.BoolVar(&config.noHeader, "noheader", false, "Don't output headers")
+	flag.BoolVar(&config.noHeader, "H", false, "Don't output headers (shorthand)")
+
+	flag.BoolVar(&config.help, "help", false, "Show help message")
+	flag.BoolVar(&config.help, "h", false, "Show help message (shorthand)")
+
+	// Добавляем кастомный парсер для параметров
+	flag.CommandLine.Init(os.Args[0], flag.ContinueOnError)
+
+	// Парсим флаги до "--"
+	args := os.Args[1:]
+	var paramArgs []string
+	var regularArgs []string
+	afterDoubleDash := false
+
+	for _, arg := range args {
+		if arg == "--" {
+			afterDoubleDash = true
+			continue
+		}
+		if afterDoubleDash {
+			paramArgs = append(paramArgs, arg)
+		} else {
+			regularArgs = append(regularArgs, arg)
+		}
+	}
+
+	// Парсим обычные флаги
+	err := flag.CommandLine.Parse(regularArgs)
+	if err != nil {
+		if err == flag.ErrHelp {
+			showHelp()
+			return
+		}
+		fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n\n", err)
+		showHelp()
+		os.Exit(1)
+	}
+
+	// Парсим параметры после "--"
+	for _, param := range paramArgs {
+		if strings.Contains(param, "=") {
+			parts := strings.SplitN(param, "=", 2)
+			paramName := strings.TrimPrefix(parts[0], "-") // Убираем возможный префикс "-"
+			config.params[paramName] = parts[1]
+		}
+	}
+
+	// Показываем помощь, если запрошено
+	if config.help {
+		showHelp()
+		return
+	}
+
+	// Определяем формат
+	format := determineFormat(config.format, config.outputFile)
+	config.format = format
+
+	// Проверяем формат
+	validFormats := map[string]bool{
+		"tsv": true, "csv": true, "jira": true,
+		"html": true, "xls": true, "xlsx": true,
+	}
+
+	if !validFormats[config.format] {
+		fmt.Fprintf(os.Stderr, "Error: format must be 'tsv', 'csv', 'jira', 'html', 'xls' or 'xlsx'\n\n")
+		showHelp()
+		os.Exit(1)
+	}
+
+	// Для форматов Excel обязательно должен быть указан выходной файл
+	if (config.format == "xls" || config.format == "xlsx") && config.outputFile == "" {
+		fmt.Fprintf(os.Stderr, "Error: output file (-o) must be specified for Excel formats\n\n")
+		showHelp()
+		os.Exit(1)
+	}
+
+	// Получаем строку подключения из переменных окружения
+	connString := os.Getenv("ORACLE_CONNECTION_STRING")
+	if connString == "" {
+		fmt.Fprintf(os.Stderr, "Error: ORACLE_CONNECTION_STRING environment variable not set\n")
+		fmt.Fprintf(os.Stderr, "Format: oracle://username:password@hostname:port/service_name\n")
+		fmt.Fprintf(os.Stderr, "Example: oracle://scott:tiger@localhost:1521/XE\n\n")
+		showHelp()
+		os.Exit(1)
+	}
+
+	// Подключаемся к базе данных
+	db, err := sql.Open("oracle", connString)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to database: %v\n\n", err)
+		showHelp()
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	// Проверяем соединение
+	if err := db.Ping(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error pinging database: %v\n\n", err)
+		showHelp()
+		os.Exit(1)
+	}
+
+	// Проверяем, что указан хотя бы один источник запросов
 	stat, _ := os.Stdin.Stat()
 	if config.inputFile == "" && config.queryCode == "" && len(flag.Args()) == 0 &&
 		(stat.Mode()&os.ModeCharDevice) != 0 {
 		// Интерактивный режим
-		queries, err = getQueriesFromInteractiveMode(db, config)
+		err = getQueriesFromInteractiveMode(db, config)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting queries: %v\n\n", err)
+			fmt.Fprintf(os.Stderr, "Error in interactive mode: %v\n\n", err)
 			showHelp()
 			os.Exit(1)
 		}
 		return // Завершаем программу после интерактивного режима
+	}
+
+	// Получаем SQL команды (неинтерактивный режим)
+	queries, err := getQueries(config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting queries: %v\n\n", err)
+		showHelp()
+		os.Exit(1)
+	}
+
+	if len(queries) == 0 {
+		fmt.Fprintf(os.Stderr, "No queries to execute\n\n")
+		showHelp()
+		os.Exit(1)
+	}
+
+	// Применяем подстановку параметров ко всем запросам
+	for i := range queries {
+		queries[i] = substituteParams(queries[i], config.params)
+	}
+
+	// Обработка в зависимости от формата
+	if config.format == "xls" || config.format == "xlsx" {
+		err = executeExcelQueries(db, queries, config)
 	} else {
-		// Неинтерактивный режим
-		queries, err = getQueries(config)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting queries: %v\n\n", err)
-			showHelp()
-			os.Exit(1)
-		}
+		err = executeTextQueries(db, queries, config)
 	}
 
-	// ... остальной код выполнения запросов ...
-}
-
-func getQueriesFromInteractiveMode(db *sql.DB, config Config) error {
-	fmt.Println("gocl interactive mode. Type SQL commands, use '/' to execute, 'exit' to quit.")
-	var currentQuery strings.Builder
-
-	fmt.Print("SQL> ")
-
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Проверяем команды выхода
-		if strings.ToLower(strings.TrimSpace(line)) == "exit" ||
-			strings.ToLower(strings.TrimSpace(line)) == "quit" {
-			break
-		}
-
-		// Удаляем пробельные символы с начала и конца строки
-		trimmedLine := strings.TrimSpace(line)
-
-		// Проверяем, является ли строка разделителем команд
-		if trimmedLine != "" && strings.Trim(trimmedLine, "/") == "" {
-			// Это строка-разделитель (содержит только символы "/")
-			// Выполняем текущий запрос
-			if currentQuery.Len() > 0 {
-				query := strings.TrimSpace(currentQuery.String())
-				if query != "" {
-					query = strings.TrimSuffix(query, ";")
-					query = strings.TrimSpace(query)
-
-					// Применяем подстановку параметров
-					query = substituteParams(query, config.params)
-
-					// Выполняем запрос
-					if err := executeInteractiveQuery(db, query, config); err != nil {
-						fmt.Fprintf(os.Stderr, "Error executing query: %v\n", err)
-					}
-				}
-				currentQuery.Reset()
-			}
-			fmt.Print("SQL> ")
-		} else {
-			// Это обычная строка, добавляем её к текущему запросу
-			if currentQuery.Len() > 0 {
-				currentQuery.WriteString("\n")
-			}
-			currentQuery.WriteString(line)
-		}
-	}
-
-	// Выполняем последний запрос, если он есть
-	if currentQuery.Len() > 0 {
-		query := strings.TrimSpace(currentQuery.String())
-		if query != "" {
-			query = strings.TrimSuffix(query, ";")
-			query = strings.TrimSpace(query)
-
-			// Применяем подстановку параметров
-			query = substituteParams(query, config.params)
-
-			// Выполняем запрос
-			if err := executeInteractiveQuery(db, query, config); err != nil {
-				fmt.Fprintf(os.Stderr, "Error executing query: %v\n", err)
-			}
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("error reading from stdin: %v", err)
-	}
-
-	return nil
-}
-
-func executeInteractiveQuery(db *sql.DB, query string, config Config) error {
-	// Пропускаем пустые запросы
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil
-	}
-
-	// Выполняем запрос
-	rows, err := db.Query(query)
 	if err != nil {
-		return fmt.Errorf("error executing query: %v", err)
+		fmt.Fprintf(os.Stderr, "Error executing queries: %v\n\n", err)
+		showHelp()
+		os.Exit(1)
 	}
-	defer rows.Close()
-
-	// Получаем имена колонок
-	columns, err := rows.Columns()
-	if err != nil {
-		return fmt.Errorf("error getting columns: %v", err)
-	}
-
-	// Для интерактивного режима всегда используем TSV формат на stdout
-	configCopy := config
-	configCopy.format = "tsv"
-
-	// Выводим результаты
-	return executeQueryDefault(os.Stdout, configCopy, columns, rows)
 }
 
 func substituteParams(query string, params map[string]string) string {
@@ -437,6 +471,107 @@ func processLines(lines []string) ([]string, error) {
 	}
 
 	return result, nil
+}
+
+func getQueriesFromInteractiveMode(db *sql.DB, config Config) error {
+	fmt.Println("gocl interactive mode. Type SQL commands, use '/' to execute, 'exit' to quit.")
+	var currentQuery strings.Builder
+
+	fmt.Print("SQL> ")
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Проверяем команды выхода
+		if strings.ToLower(strings.TrimSpace(line)) == "exit" ||
+			strings.ToLower(strings.TrimSpace(line)) == "quit" {
+			break
+		}
+
+		// Удаляем пробельные символы с начала и конца строки
+		trimmedLine := strings.TrimSpace(line)
+
+		// Проверяем, является ли строка разделителем команд
+		if trimmedLine != "" && strings.Trim(trimmedLine, "/") == "" {
+			// Это строка-разделитель (содержит только символы "/")
+			// Выполняем текущий запрос
+			if currentQuery.Len() > 0 {
+				query := strings.TrimSpace(currentQuery.String())
+				if query != "" {
+					query = strings.TrimSuffix(query, ";")
+					query = strings.TrimSpace(query)
+
+					// Применяем подстановку параметров
+					query = substituteParams(query, config.params)
+
+					// Выполняем запрос
+					if err := executeInteractiveQuery(db, query, config); err != nil {
+						fmt.Fprintf(os.Stderr, "Error executing query: %v\n", err)
+					}
+				}
+				currentQuery.Reset()
+			}
+			fmt.Print("SQL> ")
+		} else {
+			// Это обычная строка, добавляем её к текущему запросу
+			if currentQuery.Len() > 0 {
+				currentQuery.WriteString("\n")
+			}
+			currentQuery.WriteString(line)
+		}
+	}
+
+	// Выполняем последний запрос, если он есть
+	if currentQuery.Len() > 0 {
+		query := strings.TrimSpace(currentQuery.String())
+		if query != "" {
+			query = strings.TrimSuffix(query, ";")
+			query = strings.TrimSpace(query)
+
+			// Применяем подстановку параметров
+			query = substituteParams(query, config.params)
+
+			// Выполняем запрос
+			if err := executeInteractiveQuery(db, query, config); err != nil {
+				fmt.Fprintf(os.Stderr, "Error executing query: %v\n", err)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading from stdin: %v", err)
+	}
+
+	return nil
+}
+
+func executeInteractiveQuery(db *sql.DB, query string, config Config) error {
+	// Пропускаем пустые запросы
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil
+	}
+
+	// Выполняем запрос
+	rows, err := db.Query(query)
+	if err != nil {
+		return fmt.Errorf("error executing query: %v", err)
+	}
+	defer rows.Close()
+
+	// Получаем имена колонок
+	columns, err := rows.Columns()
+	if err != nil {
+		return fmt.Errorf("error getting columns: %v", err)
+	}
+
+	// Для интерактивного режима всегда используем TSV формат на stdout
+	configCopy := config
+	configCopy.format = "tsv"
+
+	// Выводим результаты
+	return executeQueryDefault(os.Stdout, configCopy, columns, rows)
 }
 
 func executeTextQueries(db *sql.DB, queries []string, config Config) error {
