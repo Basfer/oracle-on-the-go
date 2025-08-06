@@ -381,8 +381,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: latest
           assets: '*'
-          fail_on_error: false
-
+          # fail_on_error: false # Убираем недопустимый параметр
+          fail-if-no-release: false # Добавляем правильный параметр
+          
       - name: Create or Update Release
         if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         uses: softprops/action-gh-release@v1
