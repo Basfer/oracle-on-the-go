@@ -9,8 +9,8 @@ on:
 
 jobs:
 
-  release:
-    name: Create Release
+  check_draft_job:
+    name: Check if commit is draft
     runs-on: ubuntu-latest
     # Запускаем при пуше в main или при создании тега
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
