@@ -55,7 +55,7 @@ func main() {
 	var regularArgs []string
 	afterDoubleDash := false
 
-	for i, arg := range args {
+	for _, arg := range args {
 		if arg == "--" {
 			afterDoubleDash = true
 			continue
