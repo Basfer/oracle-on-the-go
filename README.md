@@ -175,4 +175,4 @@ The project uses GitHub Actions for automatic building across various platforms:
 
 ## Author
 
-Sergei Badamshin
+Sergei Badamshin aka BaSF
