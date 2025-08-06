@@ -261,7 +261,6 @@ jobs:
         name: gocl-freebsd-amd64
         path: gocl
 
-
   # Джоба release-latest будет запускаться всегда, независимо от статуса предшествующих джобов,
   # но только если хотя бы одна из них была успешной.
   release-latest:
@@ -273,76 +272,85 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Wait for build jobs and check status
-        id: check_builds
+      - name: Wait for all build jobs to complete
+        id: wait_builds
         run: |
           RUN_ID=${{ github.run_id }}
           REPO=${{ github.repository }}
-          TIMEOUT=300 # 5 минут
-          INTERVAL=10
+          TIMEOUT=600 # 10 минут
+          INTERVAL=15
           ELAPSED=0
           
-          echo "Checking status of jobs in run $RUN_ID for repo $REPO"
+          # Определяем ожидаемые джобы сборки (те, что начинаются с "Build ")
+          # Мы можем получить их из контекста workflow или хардкодом, если знаем точно
+          # Для простоты предположим, что мы знаем их имена из workflow файла
+          # Но в реальности лучше получить их программно
+          
+          echo "Waiting for build jobs to complete in run $RUN_ID for repo $REPO"
+          echo "This job will wait up to $TIMEOUT seconds."
           
           while [ $ELAPSED -lt $TIMEOUT ]; do
-            # Получаем список джобов, исключая текущую джобу release-latest
+            # Получаем список всех джобов, исключая текущую
             JOBS_JSON=$(gh api "/repos/$REPO/actions/runs/$RUN_ID/jobs" \
               --jq ".jobs[] | select(.name != \"Create/Update Latest Release\") | {name: .name, status: .status, conclusion: .conclusion}")
             
-            echo "Current jobs state:"
-            echo "$JOBS_JSON"
+            # Считаем общее количество джобов сборки (начинающихся с "Build")
+            TOTAL_BUILD_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.name | startswith("Build")) | .name' | wc -l)
             
-            # Проверяем, есть ли завершенные джобы (success или failure)
-            COMPLETED_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.status == "completed") | .name' | wc -l)
-            if [ "$COMPLETED_JOBS" -gt 0 ]; then
-              echo "Some jobs have completed. Checking for successes..."
-              # Проверяем, есть ли успешные джобы, которые начинаются с "Build"
-              SUCCESSFUL_BUILDS=$(echo "$JOBS_JSON" | jq -r 'select(.status == "completed" and .conclusion == "success") | select(.name | startswith("Build")) | .name' | wc -l)
-              
-              if [ "$SUCCESSFUL_BUILDS" -gt 0 ]; then
-                echo "Found $SUCCESSFUL_BUILDS successful build job(s)."
+            # Считаем количество завершенных джобов сборки
+            COMPLETED_BUILD_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.status == "completed") | select(.name | startswith("Build")) | .name' | wc -l)
+            
+            # Считаем количество успешно завершенных джобов сборки
+            SUCCESSFUL_BUILD_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.status == "completed" and .conclusion == "success") | select(.name | startswith("Build")) | .name' | wc -l)
+            
+            echo "Build jobs: $COMPLETED_BUILD_JOBS completed out of $TOTAL_BUILD_JOBS total. Successful: $SUCCESSFUL_BUILD_JOBS"
+            
+            # Если все джобы сборки завершены
+            if [ "$TOTAL_BUILD_JOBS" -gt 0 ] && [ "$COMPLETED_BUILD_JOBS" -eq "$TOTAL_BUILD_JOBS" ]; then
+              echo "All $TOTAL_BUILD_JOBS build jobs have completed."
+              if [ "$SUCCESSFUL_BUILD_JOBS" -gt 0 ]; then
+                echo "At least $SUCCESSFUL_BUILD_JOBS build job(s) succeeded."
+                echo "all_builds_completed=true" >> $GITHUB_OUTPUT
                 echo "at_least_one_build_succeeded=true" >> $GITHUB_OUTPUT
-                exit 0
               else
-                # Проверяем, завершились ли все потенциальные джобы сборки с ошибкой
-                # Предполагаем, что джобы сборки имеют имена вида "Build <платформа>"
-                TOTAL_BUILD_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.name | startswith("Build")) | .name' | wc -l)
-                FAILED_BUILD_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.status == "completed" and .conclusion == "failure") | select(.name | startswith("Build")) | .name' | wc -l)
-                
-                if [ "$TOTAL_BUILD_JOBS" -gt 0 ] && [ "$TOTAL_BUILD_JOBS" -eq "$FAILED_BUILD_JOBS" ]; then
-                  echo "All $FAILED_BUILD_JOBS build job(s) failed."
-                  echo "at_least_one_build_succeeded=false" >> $GITHUB_OUTPUT
-                  exit 0
-                fi
-                # Если не все джобы завершены, продолжаем ожидание
-                echo "Not all build jobs finished yet ($FAILED_BUILD_JOBS failed out of $TOTAL_BUILD_JOBS total build jobs). Waiting..."
+                echo "No build jobs succeeded."
+                echo "all_builds_completed=true" >> $GITHUB_OUTPUT
+                echo "at_least_one_build_succeeded=false" >> $GITHUB_OUTPUT
               fi
+              exit 0
             else
-              echo "No jobs completed yet. Waiting..."
+              echo "Waiting for remaining $((TOTAL_BUILD_JOBS - COMPLETED_BUILD_JOBS)) build job(s) to complete..."
             fi
             
             sleep $INTERVAL
             ELAPSED=$((ELAPSED + INTERVAL))
           done
           
-          echo "Timeout reached. Could not determine final status of build jobs in time."
+          echo "Timeout reached. Not all build jobs completed in time."
+          echo "all_builds_completed=false" >> $GITHUB_OUTPUT
           echo "at_least_one_build_succeeded=false" >> $GITHUB_OUTPUT
           exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fail if no builds succeeded
-        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'false'
+      - name: Fail if no builds succeeded or timeout
+        if: steps.wait_builds.outputs.all_builds_completed == 'true' && steps.wait_builds.outputs.at_least_one_build_succeeded == 'false'
         run: |
-          echo "No build jobs succeeded or timeout reached. Aborting release creation."
+          echo "All build jobs completed, but none succeeded. Aborting release creation."
+          exit 1
+          
+      - name: Fail on timeout
+        if: steps.wait_builds.outputs.all_builds_completed == 'false'
+        run: |
+          echo "Timeout reached while waiting for build jobs to complete. Aborting release creation."
           exit 1
 
       - name: Download all artifacts
-        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'true'
+        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         uses: actions/download-artifact@v4
 
       - name: Create release artifacts
-        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'true'
+        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         run: |
           # Create release directory
           mkdir -p release
@@ -367,7 +375,7 @@ jobs:
           shopt -u nullglob
 
       - name: Delete existing latest release assets (if any)
-        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'true'
+        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         uses: mknejp/delete-release-assets@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -376,7 +384,7 @@ jobs:
           fail_on_error: false
 
       - name: Create or Update Release
-        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'true'
+        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: latest
