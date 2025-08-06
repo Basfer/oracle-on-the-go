@@ -1,6 +1,6 @@
 module gocl
 
-go 1.19
+go 1.23
 
 require github.com/sijms/go-ora/v2 v2.7.11
 
