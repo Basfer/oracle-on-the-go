@@ -114,7 +114,10 @@ jobs:
 
     - name: Build
       run: |
-        GOOS=windows GOARCH=amd64 go build -v -o gocl.exe
+        go build -v -o gocl.exe
+      env:
+        GOOS: windows
+        GOARCH: amd64
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -142,7 +145,10 @@ jobs:
 
     - name: Build
       run: |
-        GOOS=windows GOARCH=386 go build -v -o gocl.exe
+        go build -v -o gocl.exe
+      env:
+        GOOS: windows
+        GOARCH: 386
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
