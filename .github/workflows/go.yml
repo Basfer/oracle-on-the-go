@@ -24,7 +24,7 @@ jobs:
           COMMIT_MESSAGE=$(git log -1 --pretty=format:%s)
           echo "Last commit message: $COMMIT_MESSAGE"
           
-          if [[ "${{ github.ref }}" == refs/tags/* ]] || [[ "$COMMIT_MESSAGE" == *"-draft" ]]; then
+          if [[ "${{ github.ref }}" == refs/heads/* ]] && [[ "$COMMIT_MESSAGE" == *"-draft" ]]; then
             echo "is_draft=true" >> $GITHUB_OUTPUT
             exit 1
           else
