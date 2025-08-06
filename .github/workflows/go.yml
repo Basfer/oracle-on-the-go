@@ -126,6 +126,34 @@ jobs:
         name: gocl-darwin-amd64
         path: gocl
 
+  build-darwin-arm64:
+    name: Build macOS ARM64
+    runs-on: macos-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+        cache: true
+
+    - name: Get dependencies
+      run: |
+        go mod download
+        go mod tidy
+
+    - name: Build
+      run: |
+        GOOS=darwin GOARCH=arm64 go build -v -o gocl .
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: gocl-darwin-arm64
+        path: gocl
+
   # Other Unix-like systems
   build-solaris-amd64:
     name: Build Solaris AMD64
