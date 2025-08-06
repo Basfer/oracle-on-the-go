@@ -122,11 +122,13 @@ func main() {
 		// Проверяем, есть ли данные в stdin
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) != 0 {
-			// stdin пуст и не указаны источники запросов
+			// stdin подключен к терминалу (interactive mode) - нет данных для чтения
 			fmt.Fprintf(os.Stderr, "Error: must specify -input, -code, or provide SQL via stdin\n\n")
 			showHelp()
 			os.Exit(1)
 		}
+		// stdin не подключен к терминалу - это pipe или redirect, можно читать
+		// продолжаем выполнение, stdin будет обработан в getQueries
 	}
 
 	// Получаем строку подключения из переменных окружения
