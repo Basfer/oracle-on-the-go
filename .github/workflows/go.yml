@@ -63,33 +63,6 @@ jobs:
         name: gocl-linux-arm64
         path: gocl
 
-  build-linux-386:
-    name: Build Linux 386
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        cache: true
-
-    - name: Get dependencies
-      run: |
-        go mod download
-        go mod tidy
-
-    - name: Build
-      run: |
-        GOOS=linux GOARCH=386 go build -v -o gocl .
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: gocl-linux-386
-        path: gocl
-
   # Windows builds
   build-windows-amd64:
     name: Build Windows AMD64
@@ -121,36 +94,6 @@ jobs:
         name: gocl-windows-amd64
         path: gocl.exe
 
-  build-windows-386:
-    name: Build Windows 386
-    runs-on: windows-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        cache: true
-
-    - name: Get dependencies
-      run: |
-        go mod download
-        go mod tidy
-
-    - name: Build
-      run: |
-        go build -v -o gocl.exe
-      env:
-        GOOS: windows
-        GOARCH: 386
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: gocl-windows-386
-        path: gocl.exe
-
   # macOS builds
   build-darwin-amd64:
     name: Build macOS AMD64
@@ -162,6 +105,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
+        go-version: '1.19'
         cache: true
 
     - name: Get dependencies
@@ -189,6 +133,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
+        go-version: '1.19'
         cache: true
 
     - name: Get dependencies
@@ -383,7 +328,7 @@ jobs:
           assets: '*'
           # fail_on_error: false # Убираем недопустимый параметр
           fail-if-no-release: false # Добавляем правильный параметр
-          
+
       - name: Create or Update Release
         if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         uses: softprops/action-gh-release@v1
