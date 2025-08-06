@@ -242,7 +242,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && steps.check_draft.outputs.is_draft == 'true'
         run: |
           echo "Skipping release creation because the commit is marked as draft."
-          exit 0
+          exit 1
 
       - name: Wait for all build jobs to complete
         id: wait_builds
