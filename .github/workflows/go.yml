@@ -1,0 +1,130 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: 386
+          # Windows
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+          - os: windows-latest
+            goos: windows
+            goarch: 386
+          # macOS
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+          # Solaris amd64 (build on Linux as runner)
+          - os: ubuntu-latest
+            goos: solaris
+            goarch: amd64
+          # Solaris SPARC (build on Linux as runner)
+          - os: ubuntu-latest
+            goos: solaris
+            goarch: sparc64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.19'
+        cache: true
+
+    - name: Get dependencies
+      run: |
+        go mod download
+        go mod tidy
+
+    - name: Build
+      run: |
+        # Set executable name based on OS
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          EXECUTABLE_NAME="gocl.exe"
+        else
+          EXECUTABLE_NAME="gocl"
+        fi
+        
+        # Build for target platform
+        GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -v -o ${EXECUTABLE_NAME} .
+      shell: bash
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: gocl-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: |
+          gocl
+          gocl.exe
+        if-no-files-found: ignore
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Create release artifacts
+      run: |
+        # Create release directory
+        mkdir -p release
+        
+        # Process each artifact directory
+        for dir in gocl-*; do
+          if [ -d "$dir" ]; then
+            # Get platform info from directory name
+            platform=$(echo "$dir" | sed 's/gocl-//')
+            
+            # Create archive based on platform
+            if [[ "$platform" == *"windows"* ]]; then
+              # Windows - create ZIP
+              (cd "$dir" && zip -r "../release/gocl-${{ github.ref_name }}-$platform.zip" .)
+            else
+              # Unix-like systems - create tar.gz
+              (cd "$dir" && tar -czf "../release/gocl-${{ github.ref_name }}-$platform.tar.gz" .)
+            fi
+          fi
+        done
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          release/gocl-${{ github.ref_name }}-*.zip
+          release/gocl-${{ github.ref_name }}-*.tar.gz
+        draft: true
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
