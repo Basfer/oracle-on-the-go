@@ -1,0 +1,9 @@
+/.dbobjects
+/.model
+/.project
+/.idea
+/venv
+*.~sql
+*.gz
+*.7z
+*.zip
