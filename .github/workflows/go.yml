@@ -266,40 +266,75 @@ jobs:
   # но только если хотя бы одна из них была успешной.
   release-latest:
     name: Create/Update Latest Release
-    # Убираем прямую зависимость от всех сборок в needs
-    # Вместо этого будем проверять их статус внутри шагов
     runs-on: ubuntu-latest
-    # Запускаем всегда при пуше в main, независимо от успеха/фейла предыдущих джобов
+    # Запускаем всегда при пуше в main
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Check if any build succeeded
+      - name: Wait for build jobs and check status
         id: check_builds
-        # Этот шаг использует GitHub CLI для проверки статуса других джобов в текущем workflow run
         run: |
           RUN_ID=${{ github.run_id }}
-          # Получаем список джобов в текущем запуске
-          JOBS_JSON=$(gh api "/repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" --jq '.jobs[] | {name: .name, conclusion: .conclusion}')
+          REPO=${{ github.repository }}
+          TIMEOUT=300 # 5 минут
+          INTERVAL=10
+          ELAPSED=0
           
-          # Проверяем, есть ли успешные джобы сборки (начинаются с "Build ")
-          SUCCESS_COUNT=$(echo "$JOBS_JSON" | jq -r 'select(.name | startswith("Build ")) | select(.conclusion == "success") | .name' | wc -l)
+          echo "Checking status of jobs in run $RUN_ID for repo $REPO"
           
-          if [ "$SUCCESS_COUNT" -gt 0 ]; then
-            echo "at_least_one_build_succeeded=true" >> $GITHUB_OUTPUT
-            echo "Found $SUCCESS_COUNT successful build(s)."
-          else
-            echo "at_least_one_build_succeeded=false" >> $GITHUB_OUTPUT
-            echo "No successful builds found."
-          fi
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            # Получаем список джобов, исключая текущую джобу release-latest
+            JOBS_JSON=$(gh api "/repos/$REPO/actions/runs/$RUN_ID/jobs" \
+              --jq ".jobs[] | select(.name != \"Create/Update Latest Release\") | {name: .name, status: .status, conclusion: .conclusion}")
+            
+            echo "Current jobs state:"
+            echo "$JOBS_JSON"
+            
+            # Проверяем, есть ли завершенные джобы (success или failure)
+            COMPLETED_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.status == "completed") | .name' | wc -l)
+            if [ "$COMPLETED_JOBS" -gt 0 ]; then
+              echo "Some jobs have completed. Checking for successes..."
+              # Проверяем, есть ли успешные джобы, которые начинаются с "Build"
+              SUCCESSFUL_BUILDS=$(echo "$JOBS_JSON" | jq -r 'select(.status == "completed" and .conclusion == "success") | select(.name | startswith("Build")) | .name' | wc -l)
+              
+              if [ "$SUCCESSFUL_BUILDS" -gt 0 ]; then
+                echo "Found $SUCCESSFUL_BUILDS successful build job(s)."
+                echo "at_least_one_build_succeeded=true" >> $GITHUB_OUTPUT
+                exit 0
+              else
+                # Проверяем, завершились ли все потенциальные джобы сборки с ошибкой
+                # Предполагаем, что джобы сборки имеют имена вида "Build <платформа>"
+                TOTAL_BUILD_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.name | startswith("Build")) | .name' | wc -l)
+                FAILED_BUILD_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.status == "completed" and .conclusion == "failure") | select(.name | startswith("Build")) | .name' | wc -l)
+                
+                if [ "$TOTAL_BUILD_JOBS" -gt 0 ] && [ "$TOTAL_BUILD_JOBS" -eq "$FAILED_BUILD_JOBS" ]; then
+                  echo "All $FAILED_BUILD_JOBS build job(s) failed."
+                  echo "at_least_one_build_succeeded=false" >> $GITHUB_OUTPUT
+                  exit 0
+                fi
+                # Если не все джобы завершены, продолжаем ожидание
+                echo "Not all build jobs finished yet ($FAILED_BUILD_JOBS failed out of $TOTAL_BUILD_JOBS total build jobs). Waiting..."
+              fi
+            else
+              echo "No jobs completed yet. Waiting..."
+            fi
+            
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          
+          echo "Timeout reached. Could not determine final status of build jobs in time."
+          echo "at_least_one_build_succeeded=false" >> $GITHUB_OUTPUT
+          exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Fail if no builds succeeded
         if: steps.check_builds.outputs.at_least_one_build_succeeded == 'false'
         run: |
-          echo "No build jobs succeeded. Aborting release creation."
+          echo "No build jobs succeeded or timeout reached. Aborting release creation."
           exit 1
 
       - name: Download all artifacts
@@ -313,10 +348,11 @@ jobs:
           mkdir -p release
           
           # Process each artifact directory
-          for dir in gocl-*; do
+          shopt -s nullglob # Handle case where no gocl-* dirs exist
+          for dir in gocl-*/; do
             if [ -d "$dir" ]; then
               # Get platform info from directory name
-              platform=$(echo "$dir" | sed 's/gocl-//')
+              platform=$(echo "$dir" | sed 's/\/$//' | sed 's/gocl-//')
               
               # Create archive based on platform
               if [[ "$platform" == *"windows"* ]]; then
@@ -328,6 +364,7 @@ jobs:
               fi
             fi
           done
+          shopt -u nullglob
 
       - name: Delete existing latest release assets (if any)
         if: steps.check_builds.outputs.at_least_one_build_succeeded == 'true'
