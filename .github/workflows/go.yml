@@ -246,12 +246,7 @@ jobs:
     needs: check_draft
     runs-on: ubuntu-latest
     # Запускаем при пуше в main или при создании тега и если не draft
-    if: >
-      github.event_name == 'push' && 
-      (
-        (github.ref == 'refs/heads/main' && needs.check_draft.outputs.is_draft != 'true') || 
-        startsWith(github.ref, 'refs/tags/')
-      )
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
