@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"bufio"
 
 	_ "github.com/sijms/go-ora/v2"
 	"github.com/xuri/excelize/v2"
@@ -225,44 +226,84 @@ func determineFormat(formatFlag string, outputFile string) string {
 }
 
 func getQueries(config Config) ([]string, error) {
-	var content string
+	var lines []string
 	
-	// Если указан файл
+	// Получаем строки из источника
 	if config.inputFile != "" {
-		data, err := os.ReadFile(config.inputFile)
+		// Читаем файл построчно
+		file, err := os.Open(config.inputFile)
 		if err != nil {
+			return nil, fmt.Errorf("error opening file %s: %v", config.inputFile, err)
+		}
+		defer file.Close()
+		
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
 			return nil, fmt.Errorf("error reading file %s: %v", config.inputFile, err)
 		}
-		content = string(data)
 	} else if config.queryCode != "" {
-		// Если указан код напрямую
-		content = config.queryCode
+		// Разбиваем код на строки
+		lines = strings.Split(config.queryCode, "\n")
 	} else {
-		// Читаем из stdin
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
+		// Читаем из stdin построчно
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			lines = append(lines, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
 			return nil, fmt.Errorf("error reading from stdin: %v", err)
 		}
-		content = string(data)
 	}
 	
-	// Разделяем команды по '/'
-	queries := strings.Split(content, "/")
+	// Обрабатываем строки и разделяем команды
+	var queries []string
+	var currentQuery strings.Builder
 	
-	// Очищаем команды
+	for _, line := range lines {
+		// Удаляем пробельные символы с начала и конца строки
+		trimmedLine := strings.TrimSpace(line)
+		
+		// Проверяем, является ли строка разделителем команд
+		if trimmedLine != "" && strings.Trim(trimmedLine, "/") == "" {
+			// Это строка-разделитель (содержит только символы "/")
+			// Завершаем текущий запрос
+			if currentQuery.Len() > 0 {
+				query := strings.TrimSpace(currentQuery.String())
+				if query != "" {
+					queries = append(queries, query)
+				}
+				currentQuery.Reset()
+			}
+		} else {
+			// Это обычная строка, добавляем её к текущему запросу
+			if currentQuery.Len() > 0 {
+				currentQuery.WriteString("\n")
+			}
+			currentQuery.WriteString(line)
+		}
+	}
+	
+	// Не забываем добавить последний запрос, если он есть
+	if currentQuery.Len() > 0 {
+		query := strings.TrimSpace(currentQuery.String())
+		if query != "" {
+			queries = append(queries, query)
+		}
+	}
+	
+	// Очищаем команды от точки с запятой в конце
 	var result []string
 	for _, query := range queries {
-		// Удаляем начальные и конечные пробельные символы
-		trimmed := strings.TrimSpace(query)
-		
 		// Удаляем точку с запятой в конце, если она есть
-		trimmed = strings.TrimSuffix(trimmed, ";")
+		query = strings.TrimSuffix(query, ";")
+		// Еще раз удаляем пробельные символы
+		query = strings.TrimSpace(query)
 		
-		// Еще раз удаляем пробельные символы, которые могли остаться после точки с запятой
-		trimmed = strings.TrimSpace(trimmed)
-		
-		if trimmed != "" {
-			result = append(result, trimmed)
+		if query != "" {
+			result = append(result, query)
 		}
 	}
 	
