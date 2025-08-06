@@ -26,6 +26,7 @@ jobs:
           
           if [[ "$COMMIT_MESSAGE" == *"-draft" ]]; then
             echo "is_draft=true" >> $GITHUB_OUTPUT
+            exit 1
           else
             echo "is_draft=false" >> $GITHUB_OUTPUT
           fi
@@ -34,7 +35,6 @@ jobs:
   build-linux-amd64:
     name: Build Linux AMD64
     needs: check_draft
-    if: (needs.check_draft.outputs.is_draft != 'true')
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -64,7 +64,6 @@ jobs:
   build-linux-arm64:
     name: Build Linux ARM64
     needs: check_draft
-    if: (needs.check_draft.outputs.is_draft != 'true')
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -95,7 +94,6 @@ jobs:
   build-windows-amd64:
     name: Build Windows AMD64
     needs: check_draft
-    if: (needs.check_draft.outputs.is_draft != 'true')
     runs-on: windows-latest
     steps:
     - name: Checkout code
@@ -129,7 +127,6 @@ jobs:
   build-darwin-amd64:
     name: Build macOS AMD64
     needs: check_draft
-    if: (needs.check_draft.outputs.is_draft != 'true')
     runs-on: macos-latest
     steps:
     - name: Checkout code
@@ -159,7 +156,6 @@ jobs:
   build-darwin-arm64:
     name: Build macOS ARM64
     needs: check_draft
-    if: (needs.check_draft.outputs.is_draft != 'true')
     runs-on: macos-latest
     steps:
     - name: Checkout code
@@ -190,7 +186,6 @@ jobs:
   build-solaris-amd64:
     name: Build Solaris AMD64
     needs: check_draft
-    if: (needs.check_draft.outputs.is_draft != 'true')
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -220,7 +215,6 @@ jobs:
   build-freebsd-amd64:
     name: Build FreeBSD AMD64
     needs: check_draft
-    if: (needs.check_draft.outputs.is_draft != 'true')
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
