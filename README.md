@@ -1,4 +1,4 @@
-# oracle-on-the-go - Oracle Database CLI Client
+# gocl - Oracle Database CLI Client
 
 [![Build and Release](https://github.com/Basfer/oracle-on-the-go/actions/workflows/go.yml/badge.svg)](https://github.com/Basfer/oracle-on-the-go/actions)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/Basfer/oracle-on-the-go)](https://github.com/Basfer/oracle-on-the-go/releases)
@@ -21,11 +21,11 @@ Command-line utility for executing SQL queries against Oracle database with outp
 
 Download the appropriate binary for your operating system from the [latest release](https://github.com/Basfer/oracle-on-the-go/releases/latest):
 
-- Linux: `oracle-on-the-go-linux-amd64.tar.gz`
-- Windows: `oracle-on-the-go-windows-amd64.zip`
-- macOS: `oracle-on-the-go-darwin-amd64.tar.gz`
-- Solaris: `oracle-on-the-go-solaris-amd64.tar.gz`
-- FreeBSD: `oracle-on-the-go-freebsd-amd64.tar.gz`
+- Linux: `gocl-linux-amd64.tar.gz`
+- Windows: `gocl-windows-amd64.zip`
+- macOS: `gocl-darwin-amd64.tar.gz`
+- Solaris: `gocl-solaris-amd64.tar.gz`
+- FreeBSD: `gocl-freebsd-amd64.tar.gz`
 
 ### Using the latest build
 
@@ -38,7 +38,7 @@ Requires Go 1.23 or higher:
 ```bash
 git clone https://github.com/Basfer/oracle-on-the-go.git
 cd oracle-on-the-go
-go build -o oracle-on-the-go
+go build -o gocl
 ```
 
 ## Quick Start
@@ -50,7 +50,7 @@ go build -o oracle-on-the-go
 
 2. Execute a simple query:
    ```bash
-   oracle-on-the-go -c "SELECT * FROM dual"
+   gocl -c "SELECT * FROM dual"
    ```
 
 ## Usage
@@ -58,7 +58,7 @@ go build -o oracle-on-the-go
 ### Basic parameters
 
 ```
-oracle-on-the-go [options]
+gocl [options]
 ```
 
 **Parameters:**
@@ -98,8 +98,10 @@ If format is not specified explicitly, it's determined by the output file extens
 
 Multiple SQL queries are separated by '/' character (like in sqlplus):
 ```sql
-SELECT * FROM table1; /
-SELECT count(*) FROM table2; /
+SELECT * FROM table1;
+/
+SELECT count(*) FROM table2; 
+/
 SELECT sysdate FROM dual;
 ```
 
@@ -107,27 +109,27 @@ SELECT sysdate FROM dual;
 
 ### Execute query from command line
 ```bash
-oracle-on-the-go -c "SELECT table_name FROM user_tables WHERE rownum <= 5" -o tables.csv
+gocl -c "SELECT table_name FROM user_tables WHERE rownum <= 5" -o tables.csv
 ```
 
 ### Execute SQL file with HTML output
 ```bash
-oracle-on-the-go -i queries.sql -f html
+gocl -i queries.sql -f html
 ```
 
 ### Working with pipes and Jira format
 ```bash
-echo "SELECT * FROM dual; / SELECT 1 FROM dual;" | oracle-on-the-go -o output.jira
+echo "SELECT * FROM dual;" | gocl -o output.jira
 ```
 
 ### Create Excel file with multiple sheets
 ```bash
-oracle-on-the-go -i multiple_queries.sql -o results.xlsx
+gocl -i multiple_queries.sql -o results.xlsx
 ```
 
 ### Read from stdin without specifying source
 ```bash
-cat queries.sql | oracle-on-the-go -o report.html
+cat queries.sql | gocl -o report.html
 ```
 
 ## Oracle Connection String
