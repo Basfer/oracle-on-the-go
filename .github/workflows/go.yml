@@ -8,6 +8,37 @@ on:
     branches: [ main ]
 
 jobs:
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    # Запускаем при пуше в main или при создании тега
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    steps:
+
+    - name: Check if commit is draft (only for main branch)
+      id: check_draft
+      if: github.ref == 'refs/heads/main'
+      run: |
+        # Получаем заголовок коммита, который вызвал этот workflow
+        COMMIT_MESSAGE=$(git log -1 --pretty=format:%s ${{ github.sha }})
+        echo "Trigger commit message: $COMMIT_MESSAGE"
+        
+        # Проверяем, заканчивается ли заголовок на "-draft"
+        if [[ "$COMMIT_MESSAGE" == *"-draft" ]]; then
+          echo "Commit is marked as draft. Skipping release creation."
+          echo "is_draft=true" >> $GITHUB_OUTPUT
+        else
+          echo "Commit is not draft. Proceeding with release creation."
+          echo "is_draft=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Skip release for draft commits (only for main branch)
+      if: github.ref == 'refs/heads/main' && steps.check_draft.outputs.is_draft == 'true'
+      run: |
+        echo "Skipping release creation because the commit is marked as draft."
+        exit 1
+
   # Linux builds
   build-linux-amd64:
     name: Build Linux AMD64
