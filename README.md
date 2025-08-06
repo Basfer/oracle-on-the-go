@@ -1,54 +1,179 @@
-# gocl
+# gocl - Oracle Database CLI Client
 
-## Usage: gocl [options]
+[![Build and Release](https://github.com/Basfer/gocl/actions/workflows/go.yml/badge.svg)](https://github.com/Basfer/gocl/actions)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/Basfer/gocl)](https://github.com/Basfer/gocl/releases)
+[![License](https://img.shields.io/github/license/Basfer/gocl)](https://github.com/Basfer/gocl/blob/main/LICENSE)
 
-### Options:
-  -input, -i string
-        SQL file to execute
-  -code, -c string
-        SQL query to execute
-  -output, -o string
-        Output file name
-  -format, -f string
-        Output format (tsv, csv, jira, html, xls, xlsx)
-        If not specified, format is determined by output file extension
-  -noheader, -H
-        Don't output headers
-  -help, -h
-        Show this help message
+Командная утилита для выполнения SQL-запросов к базе данных Oracle с выводом результатов в различных форматах.
 
-### Input sources (in order of priority):
-  1. -input (-i) file
-  2. -code (-c) query
-  3. stdin (pipe or redirect)
+## Возможности
 
-### Output formats:
-  tsv   - Tab Separated Values (default)
-  csv   - Comma Separated Values
-  jira  - Jira/Confluence table format
-  html  - HTML table format
-  xls   - Excel 97-2003 format
-  xlsx  - Excel 2007+ format
+- Выполнение SQL-запросов к Oracle базе данных
+- Поддержка нескольких форматов вывода: TSV, CSV, HTML, Jira Wiki, Excel (XLS, XLSX)
+- Возможность выполнения нескольких запросов с разделением символом '/'
+- Автоматическое определение формата по расширению выходного файла
+- Поддержка чтения SQL из файлов, командной строки или stdin
+- Создание отдельных листов в Excel для каждого запроса
 
-### Format auto-detection by file extension:
-  .tsv, .txt  → tsv
-  .csv        → csv
-  .html, .htm → html
-  .xls        → xls
-  .xlsx       → xlsx
-  .jira       → jira
+## Установка
 
-### Multiple queries separator: '/' (like in sqlplus)
+### Из релизов GitHub
 
-### Environment variable:
-  ORACLE_CONNECTION_STRING - Oracle connection string
-    Format: oracle://username:password@hostname:port/service_name
-    Example: oracle://scott:tiger@localhost:1521/XE
-    With special characters: oracle://user:p%40ssw0rd@host:1521/ORCL
+Скачайте подходящий бинарный файл для вашей операционной системы из [последнего релиза](https://github.com/yourusername/gocl/releases/latest):
 
-### Examples:
-  export ORACLE_CONNECTION_STRING="oracle://user:pass@localhost:1521/XE"
-  gocl -c "SELECT * FROM dual" -o result.csv
-  gocl -i queries.sql -f html
-  echo "SELECT * FROM dual;" | gocl -o results.xlsx
-  cat queries.sql | gocl -f jira > output.jira
+- Linux: `gocl-linux-amd64.tar.gz`
+- Windows: `gocl-windows-amd64.zip`
+- macOS: `gocl-darwin-amd64.tar.gz`
+- Solaris: `gocl-solaris-amd64.tar.gz`
+- FreeBSD: `gocl-freebsd-amd64.tar.gz`
+
+### Использование latest-сборки
+
+Последняя автоматическая сборка доступна в [релизе latest](https://github.com/yourusername/gocl/releases/tag/latest).
+
+### Из исходного кода
+
+Требуется Go 1.19 или выше:
+
+```bash
+git clone https://github.com/yourusername/gocl.git
+cd gocl
+go build -o gocl
+```
+
+## Быстрый старт
+
+1. Установите переменную окружения с строкой подключения к Oracle:
+   ```bash
+   export ORACLE_CONNECTION_STRING="oracle://username:password@hostname:port/service_name"
+   ```
+
+2. Выполните простой запрос:
+   ```bash
+   gocl -c "SELECT * FROM dual"
+   ```
+
+## Использование
+
+### Основные параметры
+
+```
+gocl [options]
+```
+
+**Параметры:**
+- `-input, -i string` - SQL файл для выполнения
+- `-code, -c string` - SQL запрос для выполнения
+- `-output, -o string` - Имя выходного файла
+- `-format, -f string` - Формат вывода (tsv, csv, jira, html, xls, xlsx)
+- `-noheader, -H` - Не выводить заголовки
+- `-help, -h` - Показать справку
+
+### Источники ввода (в порядке приоритета)
+
+1. Файл SQL (`-input` или `-i`)
+2. SQL запрос из командной строки (`-code` или `-c`)
+3. Ввод через stdin (pipe или redirect)
+
+### Форматы вывода
+
+- **tsv** - Значения, разделенные табуляцией (по умолчанию)
+- **csv** - Значения, разделенные запятыми
+- **jira** - Формат таблиц Jira/Confluence
+- **html** - HTML таблица
+- **xls** - Формат Excel 97-2003
+- **xlsx** - Формат Excel 2007+
+
+### Автоопределение формата
+
+Если формат не указан явно, он определяется по расширению выходного файла:
+- `.tsv`, `.txt` → tsv
+- `.csv` → csv
+- `.html`, `.htm` → html
+- `.xls` → xls
+- `.xlsx` → xlsx
+- `.jira` → jira
+
+### Разделение запросов
+
+Несколько SQL-запросов разделяются символом `/` (как в sqlplus):
+```sql
+SELECT * FROM table1; /
+SELECT count(*) FROM table2; /
+SELECT sysdate FROM dual;
+```
+
+## Примеры
+
+### Выполнение запроса из командной строки
+```bash
+gocl -c "SELECT table_name FROM user_tables WHERE rownum <= 5" -o tables.csv
+```
+
+### Выполнение SQL файла с выводом в HTML
+```bash
+gocl -i queries.sql -f html
+```
+
+### Работа с пайпами и Jira форматом
+```bash
+echo "SELECT * FROM dual; / SELECT 1 FROM dual;" | gocl -o output.jira
+```
+
+### Создание Excel файла с несколькими листами
+```bash
+gocl -i multiple_queries.sql -o results.xlsx
+```
+
+### Чтение из stdin без указания источника
+```bash
+cat queries.sql | gocl -o report.html
+```
+
+## Строка подключения к Oracle
+
+Формат строки подключения задается через переменную окружения `ORACLE_CONNECTION_STRING`:
+
+```
+oracle://username:password@hostname:port/service_name
+```
+
+**Примеры:**
+```bash
+# Простое подключение
+export ORACLE_CONNECTION_STRING="oracle://scott:tiger@localhost:1521/XE"
+
+# С экранированием специальных символов в пароле
+export ORACLE_CONNECTION_STRING="oracle://user:p%40ssw0rd@host:1521/ORCL"
+
+# Для контейнерной базы данных
+export ORACLE_CONNECTION_STRING="oracle://user:pass@localhost:1521/ORCLCDB"
+```
+
+**Экранирование специальных символов в пароле:**
+- `@` → `%40`
+- `:` → `%3A`
+- `/` → `%2F`
+- `?` → `%3F`
+- `#` → `%23`
+- `[` → `%5B`
+- `]` → `%5D`
+
+## Сборка
+
+Проект использует GitHub Actions для автоматической сборки под различные платформы:
+
+- Linux (amd64, arm64)
+- Windows (amd64, 386)
+- macOS (amd64, arm64)
+- Solaris (amd64)
+- FreeBSD (amd64)
+
+## Лицензия
+
+[MIT License](LICENSE)
+
+## Автор
+
+Sergei Badamshin 
+```
