@@ -319,6 +319,30 @@ jobs:
           done
           shopt -u nullglob
 
+
+      - name: Delete and Recreate 'latest' tag
+        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
+        run: |
+          # Получаем SHA последнего коммита в main
+          COMMIT_SHA=$(git rev-parse HEAD)
+          TAG_NAME="latest"
+          
+          echo "Current commit SHA: $COMMIT_SHA"
+          
+          # Удаляем тег, если он существует
+          gh release delete "$TAG_NAME" --yes || echo "Tag $TAG_NAME did not exist or could not be deleted via release API."
+          git push origin ":refs/tags/$TAG_NAME" || echo "Tag $TAG_NAME was not found on remote to delete."
+          
+          # Создаем аннотированный тег на текущем коммите
+          git tag -a "$TAG_NAME" "$COMMIT_SHA" -m "Latest build from main branch. Commit: $COMMIT_SHA"
+          
+          # Пушим новый тег
+          git push origin "$TAG_NAME"
+          
+          echo "Tag '$TAG_NAME' has been recreated on commit $COMMIT_SHA"
+        env:
+          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }} # Используйте ваш PAT
+
       - name: Delete existing latest release assets (if any)
         if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         uses: mknejp/delete-release-assets@v1

@@ -1,8 +1,8 @@
 # gocl
 
-##Usage: gocl [options]
+## Usage: gocl [options]
 
-###Options:
+### Options:
   -input, -i string
         SQL file to execute
   -code, -c string
@@ -17,12 +17,12 @@
   -help, -h
         Show this help message
 
-###Input sources (in order of priority):
+### Input sources (in order of priority):
   1. -input (-i) file
   2. -code (-c) query
   3. stdin (pipe or redirect)
 
-###Output formats:
+### Output formats:
   tsv   - Tab Separated Values (default)
   csv   - Comma Separated Values
   jira  - Jira/Confluence table format
@@ -30,7 +30,7 @@
   xls   - Excel 97-2003 format
   xlsx  - Excel 2007+ format
 
-###Format auto-detection by file extension:
+### Format auto-detection by file extension:
   .tsv, .txt  → tsv
   .csv        → csv
   .html, .htm → html
@@ -38,15 +38,15 @@
   .xlsx       → xlsx
   .jira       → jira
 
-###Multiple queries separator: '/' (like in sqlplus)
+### Multiple queries separator: '/' (like in sqlplus)
 
-###Environment variable:
+### Environment variable:
   ORACLE_CONNECTION_STRING - Oracle connection string
     Format: oracle://username:password@hostname:port/service_name
     Example: oracle://scott:tiger@localhost:1521/XE
     With special characters: oracle://user:p%40ssw0rd@host:1521/ORCL
 
-###Examples:
+### Examples:
   export ORACLE_CONNECTION_STRING="oracle://user:pass@localhost:1521/XE"
   gocl -c "SELECT * FROM dual" -o result.csv
   gocl -i queries.sql -f html
