@@ -28,44 +28,7 @@ func main() {
 	var config Config
 	config.params = make(map[string]string)
 
-	flag.StringVar(&config.inputFile, "input", "", "SQL file to execute")
-	flag.StringVar(&config.inputFile, "i", "", "SQL file to execute (shorthand)")
-
-	flag.StringVar(&config.queryCode, "code", "", "SQL query to execute")
-	flag.StringVar(&config.queryCode, "c", "", "SQL query to execute (shorthand)")
-
-	flag.StringVar(&config.outputFile, "output", "", "Output file name")
-	flag.StringVar(&config.outputFile, "o", "", "Output file name (shorthand)")
-
-	flag.StringVar(&config.format, "format", "", "Output format (tsv, csv, jira, html, xls, xlsx)")
-	flag.StringVar(&config.format, "f", "", "Output format (tsv, csv, jira, html, xls, xlsx) (shorthand)")
-
-	flag.BoolVar(&config.noHeader, "noheader", false, "Don't output headers")
-	flag.BoolVar(&config.noHeader, "H", false, "Don't output headers (shorthand)")
-
-	flag.BoolVar(&config.help, "help", false, "Show help message")
-	flag.BoolVar(&config.help, "h", false, "Show help message (shorthand)")
-
-	// Добавляем кастомный парсер для параметров
-	flag.CommandLine.Init(os.Args[0], flag.ContinueOnError)
-
-	// Парсим флаги до "--"
-	args := os.Args[1:]
-	var paramArgs []string
-	var regularArgs []string
-	afterDoubleDash := false
-
-	for _, arg := range args {
-		if arg == "--" {
-			afterDoubleDash = true
-			continue
-		}
-		if afterDoubleDash {
-			paramArgs = append(paramArgs, arg)
-		} else {
-			regularArgs = append(regularArgs, arg)
-		}
-	}
+	// ... существующий код инициализации флагов ...
 
 	// Парсим обычные флаги
 	err := flag.CommandLine.Parse(regularArgs)
@@ -475,6 +438,21 @@ func processLines(lines []string) ([]string, error) {
 
 func getQueriesFromInteractiveMode(db *sql.DB, config Config) error {
 	fmt.Println("gocl interactive mode. Type SQL commands, use '/' to execute, 'exit' to quit.")
+
+	// Определяем выходной поток для интерактивного режима
+	var output io.Writer
+	if config.outputFile != "" {
+		file, err := os.Create(config.outputFile)
+		if err != nil {
+			return fmt.Errorf("error creating output file: %v", err)
+		}
+		defer file.Close()
+		output = file
+		fmt.Printf("Output will be written to file: %s\n", config.outputFile)
+	} else {
+		output = os.Stdout
+	}
+
 	var currentQuery strings.Builder
 
 	fmt.Print("SQL> ")
@@ -484,13 +462,11 @@ func getQueriesFromInteractiveMode(db *sql.DB, config Config) error {
 		line := scanner.Text()
 
 		// Проверяем команды выхода
-		if strings.ToLower(strings.TrimSpace(line)) == "exit" ||
-			strings.ToLower(strings.TrimSpace(line)) == "quit" {
+		trimmedLine := strings.TrimSpace(line)
+		if strings.ToLower(trimmedLine) == "exit" ||
+			strings.ToLower(trimmedLine) == "quit" {
 			break
 		}
-
-		// Удаляем пробельные символы с начала и конца строки
-		trimmedLine := strings.TrimSpace(line)
 
 		// Проверяем, является ли строка разделителем команд
 		if trimmedLine != "" && strings.Trim(trimmedLine, "/") == "" {
@@ -506,7 +482,7 @@ func getQueriesFromInteractiveMode(db *sql.DB, config Config) error {
 					query = substituteParams(query, config.params)
 
 					// Выполняем запрос
-					if err := executeInteractiveQuery(db, query, config); err != nil {
+					if err := executeInteractiveQuery(db, query, config, output); err != nil {
 						fmt.Fprintf(os.Stderr, "Error executing query: %v\n", err)
 					}
 				}
@@ -522,18 +498,24 @@ func getQueriesFromInteractiveMode(db *sql.DB, config Config) error {
 		}
 	}
 
-	// Выполняем последний запрос, если он есть
+	// Выполняем последний запрос, если он есть (без разделителя)
 	if currentQuery.Len() > 0 {
 		query := strings.TrimSpace(currentQuery.String())
 		if query != "" {
 			query = strings.TrimSuffix(query, ";")
 			query = strings.TrimSpace(query)
 
+			// Проверяем, не является ли это команда exit без разделителя
+			if strings.ToLower(query) == "exit" || strings.ToLower(query) == "quit" {
+				// Это команда выхода без разделителя - выходим
+				return nil
+			}
+
 			// Применяем подстановку параметров
 			query = substituteParams(query, config.params)
 
 			// Выполняем запрос
-			if err := executeInteractiveQuery(db, query, config); err != nil {
+			if err := executeInteractiveQuery(db, query, config, output); err != nil {
 				fmt.Fprintf(os.Stderr, "Error executing query: %v\n", err)
 			}
 		}
@@ -546,7 +528,7 @@ func getQueriesFromInteractiveMode(db *sql.DB, config Config) error {
 	return nil
 }
 
-func executeInteractiveQuery(db *sql.DB, query string, config Config) error {
+func executeInteractiveQuery(db *sql.DB, query string, config Config, output io.Writer) error {
 	// Пропускаем пустые запросы
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -566,12 +548,13 @@ func executeInteractiveQuery(db *sql.DB, query string, config Config) error {
 		return fmt.Errorf("error getting columns: %v", err)
 	}
 
-	// Для интерактивного режима всегда используем TSV формат на stdout
+	// Для интерактивного режима всегда используем TSV формат
 	configCopy := config
 	configCopy.format = "tsv"
+	configCopy.noHeader = false // Всегда показываем заголовки в интерактивном режиме
 
-	// Выводим результаты
-	return executeQueryDefault(os.Stdout, configCopy, columns, rows)
+	// Выводим результаты в указанный поток
+	return executeQueryDefault(output, configCopy, columns, rows)
 }
 
 func executeTextQueries(db *sql.DB, queries []string, config Config) error {
