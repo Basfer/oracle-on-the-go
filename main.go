@@ -117,19 +117,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Проверяем, что указан хотя бы один источник запросов
-	if config.inputFile == "" && config.queryCode == "" && len(flag.Args()) == 0 {
-		// Проверяем, есть ли данные в stdin
-		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) != 0 {
-			// stdin подключен к терминалу (interactive mode) - нет данных для чтения
-			fmt.Fprintf(os.Stderr, "Error: must specify -input, -code, or provide SQL via stdin\n\n")
-			showHelp()
-			os.Exit(1)
-		}
-		// stdin не подключен к терминалу - это pipe или redirect, можно читать
-		// продолжаем выполнение, stdin будет обработан в getQueries
-	}
+	// // Проверяем, что указан хотя бы один источник запросов
+	// if config.inputFile == "" && config.queryCode == "" && len(flag.Args()) == 0 {
+	// 	// Проверяем, есть ли данные в stdin
+	// 	stat, _ := os.Stdin.Stat()
+	// 	if (stat.Mode() & os.ModeCharDevice) != 0 {
+	// 		// stdin подключен к терминалу (interactive mode) - нет данных для чтения
+	// 		fmt.Fprintf(os.Stderr, "Error: must specify -input, -code, or provide SQL via stdin\n\n")
+	// 		showHelp()
+	// 		os.Exit(1)
+	// 	}
+	// 	// stdin не подключен к терминалу - это pipe или redirect, можно читать
+	// 	// продолжаем выполнение, stdin будет обработан в getQueries
+	// }
 
 	// Получаем строку подключения из переменных окружения
 	connString := os.Getenv("ORACLE_CONNECTION_STRING")
@@ -318,6 +318,7 @@ func getQueries(config Config) ([]string, error) {
 		lines = strings.Split(config.queryCode, "\n")
 	} else {
 		// Читаем из stdin построчно
+		// В интерактивном режиме будет ждать ввод до Ctrl+D
 		scanner := bufio.NewScanner(os.Stdin)
 		for scanner.Scan() {
 			lines = append(lines, scanner.Text())
