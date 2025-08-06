@@ -323,13 +323,18 @@ jobs:
           done
           shopt -u nullglob
 
-      - name: Delete and Recreate tag (only for main branch)
-        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true' && github.ref == 'refs/heads/main'
+      - name: Setup Git for tag operations
+        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         run: |
           # Настраиваем Git identity
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git config --global user.name "github-actions[bot]"
-          
+        env:
+          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+
+      - name: Delete and Recreate 'latest' tag (only for main branch)
+        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true' && github.ref == 'refs/heads/main'
+        run: |
           # Получаем SHA последнего коммита в main
           COMMIT_SHA=$(git rev-parse HEAD)
           TAG_NAME="latest"
