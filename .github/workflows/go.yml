@@ -2,8 +2,8 @@ name: Build and Release
 
 on:
   push:
-    branches: [ main ] # Только main, исключаем master если не используется
-    # tags: [ 'v*' ] # Убираем теги из триггера push, если хотите, чтобы latest создавался *только* для main
+    branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
 
@@ -19,6 +19,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
+        go-version: '1.23'
         cache: true
 
     - name: Get dependencies
@@ -46,6 +47,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
+        go-version: '1.23'
         cache: true
 
     - name: Get dependencies
@@ -74,6 +76,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
+        go-version: '1.23'
         cache: true
 
     - name: Get dependencies
@@ -123,34 +126,6 @@ jobs:
         name: gocl-darwin-amd64
         path: gocl
 
-  build-darwin-arm64:
-    name: Build macOS ARM64
-    runs-on: macos-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.23'
-        cache: true
-
-    - name: Get dependencies
-      run: |
-        go mod download
-        go mod tidy
-
-    - name: Build
-      run: |
-        GOOS=darwin GOARCH=arm64 go build -v -o gocl .
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: gocl-darwin-arm64
-        path: gocl
-
   # Other Unix-like systems
   build-solaris-amd64:
     name: Build Solaris AMD64
@@ -162,6 +137,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
+        go-version: '1.23'
         cache: true
 
     - name: Get dependencies
@@ -189,6 +165,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
+        go-version: '1.23'
         cache: true
 
     - name: Get dependencies
@@ -206,16 +183,37 @@ jobs:
         name: gocl-freebsd-amd64
         path: gocl
 
-  # Джоба release-latest будет запускаться всегда, независимо от статуса предшествующих джобов,
-  # но только если хотя бы одна из них была успешной.
-  release-latest:
-    name: Create/Update Latest Release
+  release:
+    name: Create Release
     runs-on: ubuntu-latest
-    # Запускаем всегда при пуше в main
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Запускаем при пуше в main или при создании тега
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Check if commit is draft (only for main branch)
+        id: check_draft
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Получаем заголовок последнего коммита
+          COMMIT_MESSAGE=$(git log -1 --pretty=format:%s)
+          echo "Last commit message: $COMMIT_MESSAGE"
+          
+          # Проверяем, заканчивается ли заголовок на "-draft"
+          if [[ "$COMMIT_MESSAGE" == *"-draft" ]]; then
+            echo "Commit is marked as draft. Skipping release creation."
+            echo "is_draft=true" >> $GITHUB_OUTPUT
+          else
+            echo "Commit is not draft. Proceeding with release creation."
+            echo "is_draft=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip release for draft commits (only for main branch)
+        if: github.ref == 'refs/heads/main' && steps.check_draft.outputs.is_draft == 'true'
+        run: |
+          echo "Skipping release creation because the commit is marked as draft."
+          exit 0
 
       - name: Wait for all build jobs to complete
         id: wait_builds
@@ -226,18 +224,13 @@ jobs:
           INTERVAL=15
           ELAPSED=0
           
-          # Определяем ожидаемые джобы сборки (те, что начинаются с "Build ")
-          # Мы можем получить их из контекста workflow или хардкодом, если знаем точно
-          # Для простоты предположим, что мы знаем их имена из workflow файла
-          # Но в реальности лучше получить их программно
-          
           echo "Waiting for build jobs to complete in run $RUN_ID for repo $REPO"
           echo "This job will wait up to $TIMEOUT seconds."
           
           while [ $ELAPSED -lt $TIMEOUT ]; do
             # Получаем список всех джобов, исключая текущую
             JOBS_JSON=$(gh api "/repos/$REPO/actions/runs/$RUN_ID/jobs" \
-              --jq ".jobs[] | select(.name != \"Create/Update Latest Release\") | {name: .name, status: .status, conclusion: .conclusion}")
+              --jq ".jobs[] | select(.name != \"Create Release\") | {name: .name, status: .status, conclusion: .conclusion}")
             
             # Считаем общее количество джобов сборки (начинающихся с "Build")
             TOTAL_BUILD_JOBS=$(echo "$JOBS_JSON" | jq -r 'select(.name | startswith("Build")) | .name' | wc -l)
@@ -300,6 +293,17 @@ jobs:
           # Create release directory
           mkdir -p release
           
+          # Определяем имя тега/релиза
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # Для тегов используем имя тега
+            RELEASE_VERSION=${{ github.ref_name }}
+          else
+            # Для main используем "latest"
+            RELEASE_VERSION="latest"
+          fi
+          
+          echo "Release version: $RELEASE_VERSION"
+          
           # Process each artifact directory
           shopt -s nullglob # Handle case where no gocl-* dirs exist
           for dir in gocl-*/; do
@@ -310,18 +314,17 @@ jobs:
               # Create archive based on platform
               if [[ "$platform" == *"windows"* ]]; then
                 # Windows - create ZIP
-                (cd "$dir" && zip -r "../release/gocl-latest-$platform.zip" .)
+                (cd "$dir" && zip -r "../release/gocl-$RELEASE_VERSION-$platform.zip" .)
               else
                 # Unix-like systems - create tar.gz
-                (cd "$dir" && tar -czf "../release/gocl-latest-$platform.tar.gz" .)
+                (cd "$dir" && tar -czf "../release/gocl-$RELEASE_VERSION-$platform.tar.gz" .)
               fi
             fi
           done
           shopt -u nullglob
 
-
-      - name: Delete and Recreate 'latest' tag
-        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
+      - name: Delete and Recreate tag (only for main branch)
+        if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true' && github.ref == 'refs/heads/main'
         run: |
           # Настраиваем Git identity
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -350,32 +353,33 @@ jobs:
           
           echo "Tag '$TAG_NAME' has been recreated on commit $COMMIT_SHA"
         env:
-          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN2 }}
-          
-      - name: Delete existing latest release assets (if any)
+          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+
+      - name: Delete existing release assets
         if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         uses: mknejp/delete-release-assets@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: latest
+          token: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
+          # Используем соответствующий тег
+          tag: ${{ github.ref == 'refs/heads/main' && 'latest' || github.ref_name }}
           assets: '*'
-          # fail_on_error: false # Убираем недопустимый параметр
-          fail-if-no-release: false # Добавляем правильный параметр
+          fail-if-no-release: false
 
       - name: Create or Update Release
         if: steps.wait_builds.outputs.at_least_one_build_succeeded == 'true'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: latest
-          name: Latest Development Build
+          # Используем соответствующий тег
+          tag_name: ${{ github.ref == 'refs/heads/main' && 'latest' || github.ref_name }}
+          name: ${{ github.ref == 'refs/heads/main' && 'Latest Development Build' || format('Release {0}', github.ref_name) }}
           body: |
-            Latest automated build from the main branch.
+            ${{ github.ref == 'refs/heads/main' && 'Latest automated build from the main branch.' || 'Release version ' + github.ref_name }}
             Commit: ${{ github.sha }}
             Build time: $(date -u)
           files: |
-            release/gocl-latest-*.zip
-            release/gocl-latest-*.tar.gz
+            release/gocl-${{ github.ref == 'refs/heads/main' && 'latest' || github.ref_name }}-*.zip
+            release/gocl-${{ github.ref == 'refs/heads/main' && 'latest' || github.ref_name }}-*.tar.gz
           draft: false
-          prerelease: true
+          prerelease: ${{ github.ref == 'refs/heads/main' }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
