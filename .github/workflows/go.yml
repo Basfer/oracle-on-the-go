@@ -2,8 +2,8 @@ name: Build and Release
 
 on:
   push:
-    branches: [ main ] # Только main, исключаем master если не используется
-    # tags: [ 'v*' ] # Убираем теги из триггера push, если хотите, чтобы latest создавался *только* для main
+    branches: [ main ] # РўРѕР»СЊРєРѕ main, РёСЃРєР»СЋС‡Р°РµРј master РµСЃР»Рё РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ
+    # tags: [ 'v*' ] # РЈР±РёСЂР°РµРј С‚РµРіРё РёР· С‚СЂРёРіРіРµСЂР° push, РµСЃР»Рё С…РѕС‚РёС‚Рµ, С‡С‚РѕР±С‹ latest СЃРѕР·РґР°РІР°Р»СЃСЏ *С‚РѕР»СЊРєРѕ* РґР»СЏ main
   pull_request:
     branches: [ main ]
 
@@ -261,78 +261,97 @@ jobs:
         name: gocl-freebsd-amd64
         path: gocl
 
+
+  # Р”Р¶РѕР±Р° release-latest Р±СѓРґРµС‚ Р·Р°РїСѓСЃРєР°С‚СЊСЃСЏ РІСЃРµРіРґР°, РЅРµР·Р°РІРёСЃРёРјРѕ РѕС‚ СЃС‚Р°С‚СѓСЃР° РїСЂРµРґС€РµСЃС‚РІСѓСЋС‰РёС… РґР¶РѕР±РѕРІ,
+  # РЅРѕ С‚РѕР»СЊРєРѕ РµСЃР»Рё С…РѕС‚СЏ Р±С‹ РѕРґРЅР° РёР· РЅРёС… Р±С‹Р»Р° СѓСЃРїРµС€РЅРѕР№.
   release-latest:
     name: Create/Update Latest Release
-    needs: 
-      - build-linux-amd64
-      - build-linux-arm64
-      - build-linux-386
-      - build-windows-amd64
-      - build-windows-386
-      - build-darwin-amd64
-      - build-darwin-arm64
-      - build-solaris-amd64
-      - build-freebsd-amd64
+    # РЈР±РёСЂР°РµРј РїСЂСЏРјСѓСЋ Р·Р°РІРёСЃРёРјРѕСЃС‚СЊ РѕС‚ РІСЃРµС… СЃР±РѕСЂРѕРє РІ needs
+    # Р’РјРµСЃС‚Рѕ СЌС‚РѕРіРѕ Р±СѓРґРµРј РїСЂРѕРІРµСЂСЏС‚СЊ РёС… СЃС‚Р°С‚СѓСЃ РІРЅСѓС‚СЂРё С€Р°РіРѕРІ
     runs-on: ubuntu-latest
-    # Запускаем только при пуше в main
+    # Р—Р°РїСѓСЃРєР°РµРј РІСЃРµРіРґР° РїСЂРё РїСѓС€Рµ РІ main, РЅРµР·Р°РІРёСЃРёРјРѕ РѕС‚ СѓСЃРїРµС…Р°/С„РµР№Р»Р° РїСЂРµРґС‹РґСѓС‰РёС… РґР¶РѕР±РѕРІ
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-
-    - name: Create release artifacts
-      run: |
-        # Create release directory
-        mkdir -p release
-        
-        # Process each artifact directory
-        for dir in gocl-*; do
-          if [ -d "$dir" ]; then
-            # Get platform info from directory name
-            platform=$(echo "$dir" | sed 's/gocl-//')
-            
-            # Create archive based on platform
-            if [[ "$platform" == *"windows"* ]]; then
-              # Windows - create ZIP
-              (cd "$dir" && zip -r "../release/gocl-latest-$platform.zip" .)
-            else
-              # Unix-like systems - create tar.gz
-              (cd "$dir" && tar -czf "../release/gocl-latest-$platform.tar.gz" .)
-            fi
+      - name: Check if any build succeeded
+        id: check_builds
+        # Р­С‚РѕС‚ С€Р°Рі РёСЃРїРѕР»СЊР·СѓРµС‚ GitHub CLI РґР»СЏ РїСЂРѕРІРµСЂРєРё СЃС‚Р°С‚СѓСЃР° РґСЂСѓРіРёС… РґР¶РѕР±РѕРІ РІ С‚РµРєСѓС‰РµРј workflow run
+        run: |
+          RUN_ID=${{ github.run_id }}
+          # РџРѕР»СѓС‡Р°РµРј СЃРїРёСЃРѕРє РґР¶РѕР±РѕРІ РІ С‚РµРєСѓС‰РµРј Р·Р°РїСѓСЃРєРµ
+          JOBS_JSON=$(gh api "/repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs" --jq '.jobs[] | {name: .name, conclusion: .conclusion}')
+          
+          # РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё СѓСЃРїРµС€РЅС‹Рµ РґР¶РѕР±С‹ СЃР±РѕСЂРєРё (РЅР°С‡РёРЅР°СЋС‚СЃСЏ СЃ "Build ")
+          SUCCESS_COUNT=$(echo "$JOBS_JSON" | jq -r 'select(.name | startswith("Build ")) | select(.conclusion == "success") | .name' | wc -l)
+          
+          if [ "$SUCCESS_COUNT" -gt 0 ]; then
+            echo "at_least_one_build_succeeded=true" >> $GITHUB_OUTPUT
+            echo "Found $SUCCESS_COUNT successful build(s)."
+          else
+            echo "at_least_one_build_succeeded=false" >> $GITHUB_OUTPUT
+            echo "No successful builds found."
           fi
-        done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Delete existing latest release assets (if any)
-      uses: mknejp/delete-release-assets@v1
-      with:
-        # Токен нужен с правами на удаление
-        token: ${{ secrets.GITHUB_TOKEN }}
-        # Ищем релиз с тегом 'latest'
-        tag: latest
-        # Удаляем все существующие ассеты
-        assets: '*'
-        # Не фейлим, если релиз не найден
-        fail_on_error: false
+      - name: Fail if no builds succeeded
+        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'false'
+        run: |
+          echo "No build jobs succeeded. Aborting release creation."
+          exit 1
 
-    - name: Create or Update Release
-      uses: softprops/action-gh-release@v1
-      with:
-        # Используем фиксированный тег 'latest'
-        tag_name: latest
-        name: Latest Development Build
-        body: |
-          Latest automated build from the main branch.
-          Commit: ${{ github.sha }}
-          Build time: $(date -u)
-        # Файлы для загрузки
-        files: |
-          release/gocl-latest-*.zip
-          release/gocl-latest-*.tar.gz
-        # Перезаписываем, если релиз уже существует
-        draft: false
-        prerelease: true # Отмечаем как предварительный релиз
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all artifacts
+        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'true'
+        uses: actions/download-artifact@v4
+
+      - name: Create release artifacts
+        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'true'
+        run: |
+          # Create release directory
+          mkdir -p release
+          
+          # Process each artifact directory
+          for dir in gocl-*; do
+            if [ -d "$dir" ]; then
+              # Get platform info from directory name
+              platform=$(echo "$dir" | sed 's/gocl-//')
+              
+              # Create archive based on platform
+              if [[ "$platform" == *"windows"* ]]; then
+                # Windows - create ZIP
+                (cd "$dir" && zip -r "../release/gocl-latest-$platform.zip" .)
+              else
+                # Unix-like systems - create tar.gz
+                (cd "$dir" && tar -czf "../release/gocl-latest-$platform.tar.gz" .)
+              fi
+            fi
+          done
+
+      - name: Delete existing latest release assets (if any)
+        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'true'
+        uses: mknejp/delete-release-assets@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: latest
+          assets: '*'
+          fail_on_error: false
+
+      - name: Create or Update Release
+        if: steps.check_builds.outputs.at_least_one_build_succeeded == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: Latest Development Build
+          body: |
+            Latest automated build from the main branch.
+            Commit: ${{ github.sha }}
+            Build time: $(date -u)
+          files: |
+            release/gocl-latest-*.zip
+            release/gocl-latest-*.tar.gz
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
