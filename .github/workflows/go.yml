@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build ${{ matrix.os }} ${{ matrix.arch }}
+    name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -18,34 +18,43 @@ jobs:
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
+            platform: linux-amd64
           - os: ubuntu-latest
             goos: linux
             goarch: arm64
+            platform: linux-arm64
           - os: ubuntu-latest
             goos: linux
             goarch: 386
+            platform: linux-386
           # Windows
           - os: windows-latest
             goos: windows
             goarch: amd64
+            platform: windows-amd64
           - os: windows-latest
             goos: windows
             goarch: 386
+            platform: windows-386
           # macOS
           - os: macos-latest
             goos: darwin
             goarch: amd64
+            platform: darwin-amd64
           - os: macos-latest
             goos: darwin
             goarch: arm64
+            platform: darwin-arm64
           # Solaris amd64 (build on Linux as runner)
           - os: ubuntu-latest
             goos: solaris
             goarch: amd64
-          # FreeBSD (дополнительная поддерживаемая Unix-подобная система)
+            platform: solaris-amd64
+          # FreeBSD
           - os: ubuntu-latest
             goos: freebsd
             goarch: amd64
+            platform: freebsd-amd64
 
     steps:
     - name: Checkout code
@@ -54,7 +63,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.23' # Исправленная версия
+        go-version: '1.23'
         cache: true
 
     - name: Get dependencies
@@ -78,7 +87,7 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: gocl-${{ matrix.goos }}-${{ matrix.goarch }}
+        name: gocl-${{ matrix.platform }}
         path: |
           gocl
           gocl.exe
