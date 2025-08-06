@@ -1,8 +1,8 @@
-# gocl - Oracle Database CLI Client
+# oracle-on-the-go - Oracle Database CLI Client
 
-[![Build and Release](https://github.com/Basfer/gocl/actions/workflows/go.yml/badge.svg)](https://github.com/Basfer/gocl/actions)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/Basfer/gocl)](https://github.com/Basfer/gocl/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/Basfer/gocl/blob/main/LICENSE)
+[![Build and Release](https://github.com/Basfer/oracle-on-the-go/actions/workflows/go.yml/badge.svg)](https://github.com/Basfer/oracle-on-the-go/actions)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/Basfer/oracle-on-the-go)](https://github.com/Basfer/oracle-on-the-go/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/Basfer/oracle-on-the-go/blob/main/LICENSE)
 
 Command-line utility for executing SQL queries against Oracle database with output in various formats.
 
@@ -19,26 +19,26 @@ Command-line utility for executing SQL queries against Oracle database with outp
 
 ### From GitHub Releases
 
-Download the appropriate binary for your operating system from the [latest release](https://github.com/Basfer/gocl/releases/latest):
+Download the appropriate binary for your operating system from the [latest release](https://github.com/Basfer/oracle-on-the-go/releases/latest):
 
-- Linux: `gocl-linux-amd64.tar.gz`
-- Windows: `gocl-windows-amd64.zip`
-- macOS: `gocl-darwin-amd64.tar.gz`
-- Solaris: `gocl-solaris-amd64.tar.gz`
-- FreeBSD: `gocl-freebsd-amd64.tar.gz`
+- Linux: `oracle-on-the-go-linux-amd64.tar.gz`
+- Windows: `oracle-on-the-go-windows-amd64.zip`
+- macOS: `oracle-on-the-go-darwin-amd64.tar.gz`
+- Solaris: `oracle-on-the-go-solaris-amd64.tar.gz`
+- FreeBSD: `oracle-on-the-go-freebsd-amd64.tar.gz`
 
 ### Using the latest build
 
-The latest automatic build is available in the [latest release](https://github.com/Basfer/gocl/releases/tag/latest).
+The latest automatic build is available in the [latest release](https://github.com/Basfer/oracle-on-the-go/releases/tag/latest).
 
 ### From source code
 
-Requires Go 1.19 or higher:
+Requires Go 1.23 or higher:
 
 ```bash
-git clone https://github.com/Basfer/gocl.git
-cd gocl
-go build -o gocl
+git clone https://github.com/Basfer/oracle-on-the-go.git
+cd oracle-on-the-go
+go build -o oracle-on-the-go
 ```
 
 ## Quick Start
@@ -50,7 +50,7 @@ go build -o gocl
 
 2. Execute a simple query:
    ```bash
-   gocl -c "SELECT * FROM dual"
+   oracle-on-the-go -c "SELECT * FROM dual"
    ```
 
 ## Usage
@@ -58,7 +58,7 @@ go build -o gocl
 ### Basic parameters
 
 ```
-gocl [options]
+oracle-on-the-go [options]
 ```
 
 **Parameters:**
@@ -107,27 +107,27 @@ SELECT sysdate FROM dual;
 
 ### Execute query from command line
 ```bash
-gocl -c "SELECT table_name FROM user_tables WHERE rownum <= 5" -o tables.csv
+oracle-on-the-go -c "SELECT table_name FROM user_tables WHERE rownum <= 5" -o tables.csv
 ```
 
 ### Execute SQL file with HTML output
 ```bash
-gocl -i queries.sql -f html
+oracle-on-the-go -i queries.sql -f html
 ```
 
 ### Working with pipes and Jira format
 ```bash
-echo "SELECT * FROM dual; / SELECT 1 FROM dual;" | gocl -o output.jira
+echo "SELECT * FROM dual; / SELECT 1 FROM dual;" | oracle-on-the-go -o output.jira
 ```
 
 ### Create Excel file with multiple sheets
 ```bash
-gocl -i multiple_queries.sql -o results.xlsx
+oracle-on-the-go -i multiple_queries.sql -o results.xlsx
 ```
 
 ### Read from stdin without specifying source
 ```bash
-cat queries.sql | gocl -o report.html
+cat queries.sql | oracle-on-the-go -o report.html
 ```
 
 ## Oracle Connection String
