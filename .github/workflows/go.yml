@@ -11,7 +11,7 @@ jobs:
   check_draft:
     name: Check Draft Status
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    # if: github.ref == 'refs/heads/main'
     outputs:
       is_draft: ${{ steps.check.outputs.is_draft }}
     steps:
@@ -24,7 +24,7 @@ jobs:
           COMMIT_MESSAGE=$(git log -1 --pretty=format:%s)
           echo "Last commit message: $COMMIT_MESSAGE"
           
-          if [[ "$COMMIT_MESSAGE" == *"-draft" ]]; then
+          if [[ "${{ github.ref }}" == refs/tags/* ]] || [[ "$COMMIT_MESSAGE" == *"-draft" ]]; then
             echo "is_draft=true" >> $GITHUB_OUTPUT
             exit 1
           else
