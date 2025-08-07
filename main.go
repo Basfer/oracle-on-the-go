@@ -8,8 +8,8 @@ import (
 	"io"
 	"os"
 	"strings"
-	"text/template"
 
+	_ "github.com/sijms/go-ora/v2"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -50,6 +50,10 @@ type AppParams struct {
 	Interactive bool
 }
 
+var outputsList []string
+var formatsList []string
+var noheaderList []bool
+
 func main() {
 	params := parseFlags()
 
@@ -77,7 +81,6 @@ func parseFlags() *AppParams {
 	flag.StringVar(&params.QueryCode, "code", "", "SQL query to execute")
 	flag.StringVar(&params.QueryCode, "c", "", "SQL query to execute (shorthand)")
 
-	// We'll handle multiple outputs manually
 	flag.StringVar(&params.ConnectStr, "connect", "", "Oracle connection string")
 	flag.StringVar(&params.ConnectStr, "C", "", "Oracle connection string (shorthand)")
 
@@ -93,73 +96,94 @@ func parseFlags() *AppParams {
 	flag.StringVar(&params.ConnParams.Service, "database", "", "Database service name")
 	flag.StringVar(&params.ConnParams.Service, "d", "", "Database service name (shorthand)")
 
-	// Custom parsing for multiple outputs and parameters
+	// For multiple outputs
+	flag.Var((*stringSlice)(&outputsList), "output", "Output file (can be specified multiple times)")
+	flag.Var((*stringSlice)(&outputsList), "o", "Output file (shorthand)")
+
+	// For multiple formats
+	flag.Var((*stringSlice)(&formatsList), "format", "Output format for preceding output")
+	flag.Var((*stringSlice)(&formatsList), "f", "Output format (shorthand)")
+
+	// For noheader flags
+	flag.Var((*boolSlice)(&noheaderList), "noheader", "Don't print column headers")
+	flag.Var((*boolSlice)(&noheaderList), "H", "Don't print column headers (shorthand)")
+
+	// Custom parsing for parameters
 	flag.Parse()
 
-	// Parse remaining arguments for outputs and parameters
+	// Parse remaining arguments for parameters
 	args := flag.Args()
-	var outputs []OutputConfig
-	i := 0
-	for i < len(args) {
-		switch args[i] {
-		case "-output", "-o":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "Error: -output flag requires a filename\n")
-				printHelp()
-				os.Exit(1)
-			}
-			outputs = append(outputs, OutputConfig{Filename: args[i+1]})
-			i += 2
-		case "-format", "-f":
-			if len(outputs) == 0 {
-				fmt.Fprintf(os.Stderr, "Error: -format must follow -output flag\n")
-				printHelp()
-				os.Exit(1)
-			}
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "Error: -format flag requires a format\n")
-				printHelp()
-				os.Exit(1)
-			}
-			// Update the last output config
-			idx := len(outputs) - 1
-			outputs[idx].Format = OutputFormat(args[i+1])
-			i += 2
-		case "-noheader", "-H":
-			if len(outputs) == 0 {
-				fmt.Fprintf(os.Stderr, "Error: -noheader must follow -output flag\n")
-				printHelp()
-				os.Exit(1)
-			}
-			// Update the last output config
-			idx := len(outputs) - 1
-			outputs[idx].NoHeader = true
-			i++
-		default:
-			// Handle parameters like param1=value
-			if strings.Contains(args[i], "=") {
-				parts := strings.SplitN(args[i], "=", 2)
-				params.Params[parts[0]] = parts[1]
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: Unknown parameter: %s\n", args[i])
-				printHelp()
-				os.Exit(1)
-			}
-			i++
+	for _, arg := range args {
+		if strings.Contains(arg, "=") {
+			parts := strings.SplitN(arg, "=", 2)
+			params.Params[parts[0]] = parts[1]
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: Unknown parameter: %s\n", arg)
+			printHelp()
+			os.Exit(1)
 		}
 	}
 
-	// If no outputs specified, add default stdout
-	if len(outputs) == 0 {
-		outputs = append(outputs, OutputConfig{Filename: "", Format: TSV}) // stdout
-	}
-	params.Outputs = outputs
+	// Create output configs
+	params.Outputs = createOutputConfigs()
 
 	// Check if running interactively
 	stat, _ := os.Stdin.Stat()
 	params.Interactive = (stat.Mode() & os.ModeCharDevice) != 0
 
 	return &params
+}
+
+// Helper types for multiple flag values
+type stringSlice []string
+
+func (s *stringSlice) String() string {
+	return fmt.Sprintf("%v", *s)
+}
+
+func (s *stringSlice) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+type boolSlice []bool
+
+func (b *boolSlice) String() string {
+	return fmt.Sprintf("%v", *b)
+}
+
+func (b *boolSlice) Set(value string) error {
+	*b = append(*b, true)
+	return nil
+}
+
+func createOutputConfigs() []OutputConfig {
+	var configs []OutputConfig
+
+	// If no outputs specified, add default stdout
+	if len(outputsList) == 0 {
+		return []OutputConfig{{Filename: "", Format: TSV}}
+	}
+
+	for i, output := range outputsList {
+		config := OutputConfig{
+			Filename: output,
+		}
+
+		// Set format if specified
+		if i < len(formatsList) && formatsList[i] != "" {
+			config.Format = OutputFormat(formatsList[i])
+		}
+
+		// Set noheader if specified
+		if i < len(noheaderList) && noheaderList[i] {
+			config.NoHeader = true
+		}
+
+		configs = append(configs, config)
+	}
+
+	return configs
 }
 
 func printHelp() {
@@ -267,6 +291,7 @@ func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 	scanner := bufio.NewScanner(reader)
 	var buffer strings.Builder
 	lineNum := 0
+	queryIndex := 1
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -281,10 +306,11 @@ func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 		if isCommandSeparator(line) {
 			if buffer.Len() > 0 {
 				query := buffer.String()
-				if err := executeQuery(db, query, params); err != nil {
+				if err := executeQuery(db, query, params, queryIndex); err != nil {
 					return fmt.Errorf("error executing query at line %d: %w", lineNum, err)
 				}
 				buffer.Reset()
+				queryIndex++
 			}
 			continue
 		}
@@ -299,7 +325,7 @@ func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 	// Process remaining content
 	if buffer.Len() > 0 {
 		query := buffer.String()
-		if err := executeQuery(db, query, params); err != nil {
+		if err := executeQuery(db, query, params, queryIndex); err != nil {
 			return fmt.Errorf("error executing query: %w", err)
 		}
 	}
@@ -324,7 +350,7 @@ func isCommandSeparator(line string) bool {
 	return true
 }
 
-func executeQuery(db *sql.DB, query string, params *AppParams) error {
+func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) error {
 	// Substitute parameters
 	finalQuery := substituteParams(query, params.Params)
 
@@ -374,7 +400,7 @@ func executeQuery(db *sql.DB, query string, params *AppParams) error {
 
 	// Output results
 	for _, output := range params.Outputs {
-		if err := writeOutput(columns, data, &output); err != nil {
+		if err := writeOutput(columns, data, &output, queryIndex); err != nil {
 			return fmt.Errorf("failed to write output: %w", err)
 		}
 	}
@@ -391,21 +417,7 @@ func substituteParams(query string, params map[string]string) string {
 	return result
 }
 
-func writeOutput(columns []string, data [][]string, config *OutputConfig) error {
-	var writer io.Writer
-
-	// Determine output writer
-	if config.Filename == "" {
-		writer = os.Stdout
-	} else {
-		file, err := os.Create(config.Filename)
-		if err != nil {
-			return fmt.Errorf("failed to create output file: %w", err)
-		}
-		defer file.Close()
-		writer = file
-	}
-
+func writeOutput(columns []string, data [][]string, config *OutputConfig, queryIndex int) error {
 	// Determine format if not specified
 	format := config.Format
 	if format == "" {
@@ -420,17 +432,17 @@ func writeOutput(columns []string, data [][]string, config *OutputConfig) error 
 	// Write based on format
 	switch format {
 	case TSV:
-		return writeTSV(writer, columns, data, !config.NoHeader)
+		return writeTSV(config.Filename, columns, data, !config.NoHeader, queryIndex)
 	case CSV:
-		return writeCSV(writer, columns, data, !config.NoHeader)
+		return writeCSV(config.Filename, columns, data, !config.NoHeader, queryIndex)
 	case HTML:
-		return writeHTML(writer, columns, data, !config.NoHeader)
+		return writeHTML(config.Filename, columns, data, !config.NoHeader, queryIndex)
 	case JIRA:
-		return writeJIRA(writer, columns, data, !config.NoHeader)
+		return writeJIRA(config.Filename, columns, data, !config.NoHeader, queryIndex)
 	case XLS, XLSX:
-		return writeExcel(config.Filename, columns, data, !config.NoHeader)
+		return writeExcel(config.Filename, columns, data, !config.NoHeader, queryIndex)
 	default:
-		return writeTSV(writer, columns, data, !config.NoHeader)
+		return writeTSV(config.Filename, columns, data, !config.NoHeader, queryIndex)
 	}
 }
 
@@ -450,7 +462,35 @@ func getFormatFromExtension(filename string) OutputFormat {
 	}
 }
 
-func writeTSV(writer io.Writer, columns []string, data [][]string, withHeader bool) error {
+func writeTSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	var file *os.File
+	var err error
+
+	// For subsequent queries, append to file
+	if queryIndex > 1 && filename != "" {
+		file, err = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+	} else if filename == "" {
+		file = os.Stdout
+	} else {
+		file, err = os.Create(filename)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if filename != "" {
+		defer file.Close()
+	}
+
+	writer := bufio.NewWriter(file)
+	defer writer.Flush()
+
+	// Add separator between results
+	if queryIndex > 1 {
+		fmt.Fprintln(writer, "")
+	}
+
 	if withHeader {
 		fmt.Fprintln(writer, strings.Join(columns, "\t"))
 	}
@@ -462,7 +502,35 @@ func writeTSV(writer io.Writer, columns []string, data [][]string, withHeader bo
 	return nil
 }
 
-func writeCSV(writer io.Writer, columns []string, data [][]string, withHeader bool) error {
+func writeCSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	var file *os.File
+	var err error
+
+	// For subsequent queries, append to file
+	if queryIndex > 1 && filename != "" {
+		file, err = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+	} else if filename == "" {
+		file = os.Stdout
+	} else {
+		file, err = os.Create(filename)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if filename != "" {
+		defer file.Close()
+	}
+
+	writer := bufio.NewWriter(file)
+	defer writer.Flush()
+
+	// Add separator between results
+	if queryIndex > 1 {
+		fmt.Fprintln(writer, "")
+	}
+
 	if withHeader {
 		fmt.Fprintln(writer, strings.Join(columns, ","))
 	}
@@ -474,57 +542,157 @@ func writeCSV(writer io.Writer, columns []string, data [][]string, withHeader bo
 	return nil
 }
 
-func writeHTML(writer io.Writer, columns []string, data [][]string, withHeader bool) error {
-	htmlTemplate := `
-<!DOCTYPE html>
+func writeHTML(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	// For first query, create new file with header
+	if queryIndex == 1 {
+		return writeHTMLNew(filename, columns, data, withHeader)
+	}
+
+	// For subsequent queries, append to existing file
+	return writeHTMLAppend(filename, columns, data, withHeader)
+}
+
+func writeHTMLNew(filename string, columns []string, data [][]string, withHeader bool) error {
+	var file *os.File
+	var err error
+
+	if filename == "" {
+		file = os.Stdout
+	} else {
+		file, err = os.Create(filename)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+	}
+
+	writer := bufio.NewWriter(file)
+	defer writer.Flush()
+
+	// Write HTML header
+	header := `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <title>Query Results</title>
     <style>
-        table { border-collapse: collapse; }
+        table { border-collapse: collapse; margin-bottom: 20px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background-color: #f2f2f2; }
     </style>
 </head>
 <body>
-    <table>
-        {{if .WithHeader}}
-        <thead>
-            <tr>
-                {{range .Columns}}
-                <th>{{.}}</th>
-                {{end}}
-            </tr>
-        </thead>
-        {{end}}
-        <tbody>
-            {{range .Data}}
-            <tr>
-                {{range .}}
-                <td>{{.}}</td>
-                {{end}}
-            </tr>
-            {{end}}
-        </tbody>
-    </table>
+`
+	fmt.Fprint(writer, header)
+
+	// Write first table
+	if err := writeHTMLTable(writer, columns, data, withHeader); err != nil {
+		return err
+	}
+
+	// Write HTML footer (will be updated when appending)
+	footer := `
 </body>
 </html>
 `
+	fmt.Fprint(writer, footer)
 
-	tmpl, err := template.New("html").Parse(htmlTemplate)
+	return nil
+}
+
+func writeHTMLAppend(filename string, columns []string, data [][]string, withHeader bool) error {
+	if filename == "" {
+		// For stdout, just write the table
+		return writeHTMLTable(os.Stdout, columns, data, withHeader)
+	}
+
+	// Read existing file
+	content, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
 
-	return tmpl.Execute(writer, map[string]interface{}{
-		"Columns":    columns,
-		"Data":       data,
-		"WithHeader": withHeader,
-	})
+	// Find position to insert new table (before </body>)
+	contentStr := string(content)
+	pos := strings.LastIndex(contentStr, "</body>")
+	if pos == -1 {
+		return fmt.Errorf("invalid HTML file format")
+	}
+
+	// Create new content
+	newContent := contentStr[:pos]
+
+	// Add the new table
+	var tableBuf strings.Builder
+	writer := bufio.NewWriter(&tableBuf)
+	if err := writeHTMLTable(writer, columns, data, withHeader); err != nil {
+		return err
+	}
+	writer.Flush()
+
+	newContent += tableBuf.String()
+	newContent += contentStr[pos:]
+
+	// Write back to file
+	return os.WriteFile(filename, []byte(newContent), 0644)
 }
 
-func writeJIRA(writer io.Writer, columns []string, data [][]string, withHeader bool) error {
+func writeHTMLTable(writer io.Writer, columns []string, data [][]string, withHeader bool) error {
+	fmt.Fprintln(writer, "    <table>")
+
+	if withHeader {
+		fmt.Fprintln(writer, "        <thead>")
+		fmt.Fprintln(writer, "            <tr>")
+		for _, col := range columns {
+			fmt.Fprintf(writer, "                <th>%s</th>\n", col)
+		}
+		fmt.Fprintln(writer, "            </tr>")
+		fmt.Fprintln(writer, "        </thead>")
+	}
+
+	fmt.Fprintln(writer, "        <tbody>")
+	for _, row := range data {
+		fmt.Fprintln(writer, "            <tr>")
+		for _, cell := range row {
+			fmt.Fprintf(writer, "                <td>%s</td>\n", cell)
+		}
+		fmt.Fprintln(writer, "            </tr>")
+	}
+	fmt.Fprintln(writer, "        </tbody>")
+	fmt.Fprintln(writer, "    </table>")
+
+	return nil
+}
+
+func writeJIRA(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	var file *os.File
+	var err error
+
+	// For subsequent queries, append to file
+	if queryIndex > 1 && filename != "" {
+		file, err = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+	} else if filename == "" {
+		file = os.Stdout
+	} else {
+		file, err = os.Create(filename)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if filename != "" {
+		defer file.Close()
+	}
+
+	writer := bufio.NewWriter(file)
+	defer writer.Flush()
+
+	// Add separator between results
+	if queryIndex > 1 {
+		fmt.Fprintln(writer, "")
+	}
+
 	if withHeader {
 		// Header row
 		fmt.Fprint(writer, "||")
@@ -546,16 +714,31 @@ func writeJIRA(writer io.Writer, columns []string, data [][]string, withHeader b
 	return nil
 }
 
-func writeExcel(filename string, columns []string, data [][]string, withHeader bool) error {
-	f := excelize.NewFile()
+func writeExcel(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	var f *excelize.File
+	var err error
+
+	// For subsequent queries, open existing file
+	if queryIndex > 1 {
+		f, err = excelize.OpenFile(filename)
+		if err != nil {
+			return err
+		}
+	} else {
+		f = excelize.NewFile()
+		// Remove default sheet
+		f.DeleteSheet("Sheet1")
+	}
+
 	defer func() {
 		if err := f.Close(); err != nil {
 			fmt.Printf("Error closing Excel file: %v\n", err)
 		}
 	}()
 
-	sheetName := "Results"
-	f.SetSheetName("Sheet1", sheetName)
+	// Create new sheet for this query
+	sheetName := fmt.Sprintf("Results%d", queryIndex)
+	f.NewSheet(sheetName)
 
 	// Write header if needed
 	if withHeader {
