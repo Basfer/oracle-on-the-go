@@ -1,68 +1,50 @@
 #!/usr/bin/env bash
 set -e
 
-# === КонфИГУРАЦИЯ ===
+# === Конфигурация ===
 FILE="version.go"
 PATTERN='const Version = "'
-REGEX='[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?'
+VERSION_RE='[0-9]+\.[0-9]+\.[0-9]+'
+FULL_RE='[0-9]+\.[0-9]+\.[0-9]+\+[0-9]+'
 
-pwd
-ls -la 
-
-# === Проверки ===
-if [[ ! -f "$FILE" ]]; then
-  echo "Файл версии не найден: $FILE"
-  exit 1
-fi
-
-# === Получение текущей версии ===
+# === Извлечение строки версии ===
 version_line=$(grep "$PATTERN" "$FILE")
-full_version=$(echo "$version_line" | grep -oE "$REGEX")
-version=$(echo "$full_version" | cut -d'+' -f1)
-if [[ -z "$version" ]]; then
-  echo "Не удалось извлечь версию"
-  exit 1
+current_full=$(echo "$version_line" | grep -oE "$FULL_RE")
+
+# Если версия без +timestamp
+if [[ -z "$current_full" ]]; then
+  current_base=$(echo "$version_line" | grep -oE "$VERSION_RE")
+else
+  current_base=$(echo "$current_full" | cut -d'+' -f1)
 fi
 
-IFS='.' read -r major minor patch <<< "$version"
+IFS='.' read -r major minor patch <<< "$current_base"
 
 # === Получение сообщения коммита ===
 message=$(git log -1 --pretty=%B)
 
-# === Логика изменения версии ===
+# === Определение типа обновления ===
 if echo "$message" | grep -qi "#major"; then
-  major=$((major + 1))
-  minor=0
-  patch=0
-  bump_type="MAJOR"
+  major=$((major + 1)); minor=0; patch=0; bump_type="MAJOR"
 elif echo "$message" | grep -qi "#minor"; then
-  minor=$((minor + 1))
-  patch=0
-  bump_type="MINOR"
+  minor=$((minor + 1)); patch=0; bump_type="MINOR"
 elif echo "$message" | grep -qi "#patch"; then
-  patch=$((patch + 1))
-  bump_type="PATCH"
+  patch=$((patch + 1)); bump_type="PATCH"
 else
   bump_type="BUILD-only"
 fi
 
-# === Генерация timestamp ===
+# === timestamp
 build_ts=$(date +"%Y%m%d%H%M%S")
-
-# === Новая версия с timestamp ===
 new_version="$major.$minor.$patch+$build_ts"
 
-# === Обновление файла ===
-# === Сборка полной строки
-old_line="${PATTERN}${full_version}\""
+# === Строки для подстановки
+old_line=$(grep "$PATTERN" "$FILE")
 new_line="${PATTERN}${new_version}\""
-echo "$old_line->$new_line"
 
-# === Заменяем одну строку
+# === Заменить строку
 sed -i "s|$old_line|$new_line|" "$FILE"
-
-# === Git add ===
 git add "$FILE"
 
-# === Лог ===
-echo "Версия обновлена ($bump_type): $version → $new_version"
+# === Лог
+echo "Версия обновлена ($bump_type): $current_base → $new_version"
