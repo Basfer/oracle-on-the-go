@@ -297,7 +297,7 @@ func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 		line := scanner.Text()
 		lineNum++
 
-		// Print prompt in interactive mode
+		// Print prompt ONLY in interactive mode
 		if params.Interactive && buffer.Len() == 0 {
 			fmt.Print("SQL> ")
 		}
@@ -766,5 +766,4 @@ func writeExcel(filename string, columns []string, data [][]string, withHeader b
 	}
 
 	return nil
-
 }
