@@ -112,22 +112,26 @@ func parseFlags() *AppParams {
 	flag.Var((*stringSlice)(&formatsList), "format", "Output format for preceding output")
 	flag.Var((*stringSlice)(&formatsList), "f", "Output format (shorthand)")
 
-	// Custom parsing for parameters
+	// Custom parsing for parameters and flags
 	flag.Parse()
 
-	// Parse remaining arguments for parameters and noheader flags
+	// Parse remaining arguments for parameters and flags
 	args := flag.Args()
 	noheaderFlags := 0
+
 	for _, arg := range args {
-		if arg == "--noheader" || arg == "-H" {
+		switch arg {
+		case "-noheader", "-H":
 			noheaderFlags++
-		} else if strings.Contains(arg, "=") {
-			parts := strings.SplitN(arg, "=", 2)
-			params.Params[parts[0]] = parts[1]
-		} else {
-			fmt.Fprintf(os.Stderr, "Error: Unknown parameter: %s\n", arg)
-			printHelp()
-			os.Exit(1)
+		default:
+			if strings.Contains(arg, "=") {
+				parts := strings.SplitN(arg, "=", 2)
+				params.Params[parts[0]] = parts[1]
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: Unknown parameter: %s\n", arg)
+				printHelp()
+				os.Exit(1)
+			}
 		}
 	}
 
@@ -158,12 +162,13 @@ func createOutputConfigs(noheaderFlags int) []OutputConfig {
 
 	// If no outputs specified, add default stdout
 	if len(outputsList) == 0 {
-		return []OutputConfig{{Filename: "", Format: TSV}}
+		return []OutputConfig{{Filename: "", Format: TSV, NoHeader: false}}
 	}
 
 	for i, output := range outputsList {
 		config := OutputConfig{
 			Filename: output,
+			NoHeader: false, // Default to false
 		}
 
 		// Set format if specified
@@ -171,7 +176,7 @@ func createOutputConfigs(noheaderFlags int) []OutputConfig {
 			config.Format = OutputFormat(formatsList[i])
 		}
 
-		// Set noheader if specified (one -H flag per output)
+		// Set noheader if specified (associate each -H with an output in order)
 		if i < noheaderFlags {
 			config.NoHeader = true
 		}
