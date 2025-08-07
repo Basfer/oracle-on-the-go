@@ -41,6 +41,7 @@ type OutputConfig struct {
 
 type AppParams struct {
 	Help        bool
+	Version     bool
 	InputFile   string
 	QueryCode   string
 	Outputs     []OutputConfig
@@ -52,10 +53,14 @@ type AppParams struct {
 
 var outputsList []string
 var formatsList []string
-var noheaderList []bool
 
 func main() {
 	params := parseFlags()
+
+	if params.Version {
+		fmt.Printf("gocl version %s\n", Version)
+		return
+	}
 
 	if params.Help {
 		printHelp()
@@ -74,6 +79,9 @@ func parseFlags() *AppParams {
 
 	flag.BoolVar(&params.Help, "help", false, "Show help message")
 	flag.BoolVar(&params.Help, "h", false, "Show help message (shorthand)")
+
+	flag.BoolVar(&params.Version, "version", false, "Show version information")
+	flag.BoolVar(&params.Version, "v", false, "Show version information (shorthand)")
 
 	flag.StringVar(&params.InputFile, "input", "", "Input SQL file (default stdin)")
 	flag.StringVar(&params.InputFile, "i", "", "Input SQL file (shorthand)")
@@ -104,17 +112,16 @@ func parseFlags() *AppParams {
 	flag.Var((*stringSlice)(&formatsList), "format", "Output format for preceding output")
 	flag.Var((*stringSlice)(&formatsList), "f", "Output format (shorthand)")
 
-	// For noheader flags
-	flag.Var((*boolSlice)(&noheaderList), "noheader", "Don't print column headers")
-	flag.Var((*boolSlice)(&noheaderList), "H", "Don't print column headers (shorthand)")
-
 	// Custom parsing for parameters
 	flag.Parse()
 
-	// Parse remaining arguments for parameters
+	// Parse remaining arguments for parameters and noheader flags
 	args := flag.Args()
+	noheaderFlags := 0
 	for _, arg := range args {
-		if strings.Contains(arg, "=") {
+		if arg == "--noheader" || arg == "-H" {
+			noheaderFlags++
+		} else if strings.Contains(arg, "=") {
 			parts := strings.SplitN(arg, "=", 2)
 			params.Params[parts[0]] = parts[1]
 		} else {
@@ -125,7 +132,7 @@ func parseFlags() *AppParams {
 	}
 
 	// Create output configs
-	params.Outputs = createOutputConfigs()
+	params.Outputs = createOutputConfigs(noheaderFlags)
 
 	// Check if running interactively
 	stat, _ := os.Stdin.Stat()
@@ -146,18 +153,7 @@ func (s *stringSlice) Set(value string) error {
 	return nil
 }
 
-type boolSlice []bool
-
-func (b *boolSlice) String() string {
-	return fmt.Sprintf("%v", *b)
-}
-
-func (b *boolSlice) Set(value string) error {
-	*b = append(*b, true)
-	return nil
-}
-
-func createOutputConfigs() []OutputConfig {
+func createOutputConfigs(noheaderFlags int) []OutputConfig {
 	var configs []OutputConfig
 
 	// If no outputs specified, add default stdout
@@ -175,8 +171,8 @@ func createOutputConfigs() []OutputConfig {
 			config.Format = OutputFormat(formatsList[i])
 		}
 
-		// Set noheader if specified
-		if i < len(noheaderList) && noheaderList[i] {
+		// Set noheader if specified (one -H flag per output)
+		if i < noheaderFlags {
 			config.NoHeader = true
 		}
 
@@ -187,12 +183,13 @@ func createOutputConfigs() []OutputConfig {
 }
 
 func printHelp() {
-	helpText := `gocl - Oracle database client
+	helpText := fmt.Sprintf(`gocl version %s - Oracle database client
 
 Usage: gocl [options] [parameters]
 
 Options:
   -help, -h               Show this help message
+  -version, -v            Show version information
   -input, -i <file>       Input SQL file (default: stdin)
   -code, -c <query>       SQL query to execute directly
   -output, -o <file>      Output file (can be specified multiple times)
@@ -217,7 +214,7 @@ Examples:
   gocl -i query.sql -o result.csv -f csv
   gocl -c "SELECT * FROM dual" -o output.html -f html
   gocl -i query.sql -p param1=value1 param2=value2
-`
+`, Version)
 	fmt.Print(helpText)
 }
 
