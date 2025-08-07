@@ -53,6 +53,7 @@ type AppParams struct {
 
 var outputsList []string
 var formatsList []string
+var noHeaderFlags int
 
 func main() {
 	params := parseFlags()
@@ -112,35 +113,34 @@ func parseFlags() *AppParams {
 	flag.Var((*stringSlice)(&formatsList), "format", "Output format for preceding output")
 	flag.Var((*stringSlice)(&formatsList), "f", "Output format (shorthand)")
 
-	// Custom parsing for parameters and flags
+	// NoHeader flag (boolean, can be specified multiple times)
+	flag.IntVar(&noHeaderFlags, "noheader", 0, "Don't print column headers (can be specified multiple times)")
+	flag.IntVar(&noHeaderFlags, "H", 0, "Don't print column headers (shorthand)")
+
+	// Custom parsing for parameters
 	flag.Parse()
 
-	// Parse remaining arguments for parameters and flags
+	// Parse remaining arguments for parameters
 	args := flag.Args()
-	noheaderFlags := 0
-
 	for _, arg := range args {
-		switch arg {
-		case "-noheader", "-H":
-			noheaderFlags++
-		default:
-			if strings.Contains(arg, "=") {
-				parts := strings.SplitN(arg, "=", 2)
-				params.Params[parts[0]] = parts[1]
-			} else {
-				fmt.Fprintf(os.Stderr, "Error: Unknown parameter: %s\n", arg)
-				printHelp()
-				os.Exit(1)
-			}
+		if strings.Contains(arg, "=") {
+			parts := strings.SplitN(arg, "=", 2)
+			params.Params[parts[0]] = parts[1]
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: Unknown parameter: %s\n", arg)
+			printHelp()
+			os.Exit(1)
 		}
 	}
 
 	// Create output configs
-	params.Outputs = createOutputConfigs(noheaderFlags)
+	params.Outputs = createOutputConfigs()
 
 	// Check if running interactively
+	// Interactive mode: no input file specified AND stdin is a terminal
 	stat, _ := os.Stdin.Stat()
-	params.Interactive = (stat.Mode() & os.ModeCharDevice) != 0
+	params.Interactive = (params.InputFile == "" || params.QueryCode != "") &&
+		((stat.Mode() & os.ModeCharDevice) != 0)
 
 	return &params
 }
@@ -157,7 +157,7 @@ func (s *stringSlice) Set(value string) error {
 	return nil
 }
 
-func createOutputConfigs(noheaderFlags int) []OutputConfig {
+func createOutputConfigs() []OutputConfig {
 	var configs []OutputConfig
 
 	// If no outputs specified, add default stdout
@@ -176,8 +176,8 @@ func createOutputConfigs(noheaderFlags int) []OutputConfig {
 			config.Format = OutputFormat(formatsList[i])
 		}
 
-		// Set noheader if specified (associate each -H with an output in order)
-		if i < noheaderFlags {
+		// Set noheader if specified (associate each flag with an output in order)
+		if noHeaderFlags > i {
 			config.NoHeader = true
 		}
 
@@ -199,7 +199,7 @@ Options:
   -code, -c <query>       SQL query to execute directly
   -output, -o <file>      Output file (can be specified multiple times)
   -format, -f <format>    Output format for preceding -o flag
-  -noheader, -H           Don't print column headers
+  -noheader, -H           Don't print column headers (can be specified multiple times)
   -connect, -C <connstr>  Oracle connection string
   -user, -u <username>    Database username
   -password, -p <password> Database password
@@ -768,5 +768,4 @@ func writeExcel(filename string, columns []string, data [][]string, withHeader b
 	}
 
 	return nil
-
 }
