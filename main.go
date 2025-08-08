@@ -36,6 +36,7 @@ type ConnectionParams struct {
 type OutputConfig struct {
 	Filename string
 	Format   OutputFormat
+	NoHeader bool
 }
 
 type AppParams struct {
@@ -48,6 +49,7 @@ type AppParams struct {
 	ConnParams  ConnectionParams
 	Params      map[string]string
 	Interactive bool
+	NoHeader    bool
 }
 
 var outputsList []string
@@ -112,6 +114,9 @@ func parseFlags() *AppParams {
 	flag.StringVar(&params.ConnParams.Service, "database", "", "Database service name")
 	flag.StringVar(&params.ConnParams.Service, "d", "", "Database service name (shorthand)")
 
+	flag.BoolVar(&params.NoHeader, "noheader", false, "Don't print column headers")
+	flag.BoolVar(&params.NoHeader, "H", false, "Don't print column headers (shorthand)")
+
 	// For multiple outputs
 	flag.Var((*stringSlice)(&outputsList), "output", "Output file (can be specified multiple times)")
 	flag.Var((*stringSlice)(&outputsList), "o", "Output file (shorthand)")
@@ -137,7 +142,7 @@ func parseFlags() *AppParams {
 	}
 
 	// Create output configs
-	params.Outputs = createOutputConfigs()
+	params.Outputs = createOutputConfigs(params.NoHeader)
 
 	return &params
 }
@@ -154,17 +159,18 @@ func (s *stringSlice) Set(value string) error {
 	return nil
 }
 
-func createOutputConfigs() []OutputConfig {
+func createOutputConfigs(noHeader bool) []OutputConfig {
 	var configs []OutputConfig
 
 	// If no outputs specified, add default stdout
 	if len(outputsList) == 0 {
-		return []OutputConfig{{Filename: "", Format: TSV}}
+		return []OutputConfig{{Filename: "", Format: TSV, NoHeader: noHeader}}
 	}
 
 	for i, output := range outputsList {
 		config := OutputConfig{
 			Filename: output,
+			NoHeader: noHeader, // Apply global noheader setting
 		}
 
 		// Set format if specified
@@ -190,6 +196,7 @@ Options:
   -code, -c <query>       SQL query to execute directly
   -output, -o <file>      Output file (can be specified multiple times)
   -format, -f <format>    Output format for preceding -o flag
+  -noheader, -H           Don't print column headers
   -connect, -C <connstr>  Oracle connection string
   -user, -u <username>    Database username
   -password, -p <password> Database password
@@ -285,14 +292,14 @@ func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 	lineNum := 0
 	queryIndex := 1
 
+	// Print initial prompt in interactive mode
+	if params.Interactive {
+		fmt.Print("SQL> ")
+	}
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		lineNum++
-
-		// Print prompt ONLY in interactive mode and only when starting a new query
-		if params.Interactive && buffer.Len() == 0 {
-			fmt.Print("SQL> ")
-		}
 
 		// Check for command separator
 		if isCommandSeparator(line) {
@@ -303,6 +310,11 @@ func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 				}
 				buffer.Reset()
 				queryIndex++
+
+				// Print prompt after executing query in interactive mode
+				if params.Interactive {
+					fmt.Print("SQL> ")
+				}
 			}
 			continue
 		}
@@ -421,8 +433,8 @@ func writeOutput(columns []string, data [][]string, config *OutputConfig, queryI
 		}
 	}
 
-	// Always print headers (noheader functionality removed)
-	withHeader := true
+	// Use the NoHeader setting from the output config
+	withHeader := !config.NoHeader
 
 	// Write based on format
 	switch format {
