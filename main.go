@@ -93,7 +93,6 @@ func parseFlags() *AppParams {
 	flag.BoolVar(&params.Help, "h", false, "Show help message (shorthand)")
 
 	flag.BoolVar(&params.Version, "version", false, "Show version information")
-	flag.BoolVar(&params.Version, "v", false, "Show version information (shorthand)")
 
 	flag.BoolVar(&params.Debug, "debug", false, "Show debug information including executed queries")
 
