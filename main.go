@@ -123,7 +123,7 @@ func parseFlags() *AppParams {
 
 	// For variables/parameters
 	flag.Var(&varsList, "var", "Variable in format key=value (can be specified multiple times)")
-	flag.Var(&varsList, "v", "Variable in format key=value (shorthand)")
+	flag.Var(&varsList, "D", "Variable in format key=value (shorthand)")
 
 	// For multiple outputs
 	flag.Var((*stringSlice)(&outputsList), "output", "Output file (can be specified multiple times)")
@@ -210,7 +210,7 @@ Options:
   -password, -p <password> Database password
   -server, -s <server>    Database server
   -database, -d <service> Database service name
-  -var, -v key=value      Variable substitution (can be specified multiple times)
+  -var, -D key=value      Variable substitution (can be specified multiple times)
 
 Parameters:
   param=value             Substitution parameters for SQL (deprecated, use -D instead)
@@ -364,8 +364,11 @@ func isCommandSeparator(line string) bool {
 }
 
 func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) error {
+	// Clean the query - remove trailing semicolon if present
+	cleanQuery := cleanQuery(query)
+
 	// Substitute parameters
-	finalQuery := substituteParams(query, params.Params)
+	finalQuery := substituteParams(cleanQuery, params.Params)
 
 	// Debug output
 	if params.Debug {
@@ -424,6 +427,19 @@ func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) e
 	}
 
 	return nil
+}
+
+func cleanQuery(query string) string {
+	// Trim whitespace
+	trimmed := strings.TrimSpace(query)
+
+	// Remove trailing semicolon if present
+	for strings.HasSuffix(trimmed, ";") {
+		trimmed = strings.TrimSuffix(trimmed, ";")
+		trimmed = strings.TrimSpace(trimmed)
+	}
+
+	return trimmed
 }
 
 func substituteParams(query string, params map[string]string) string {
