@@ -210,7 +210,7 @@ Options:
   -password, -p <password> Database password
   -server, -s <server>    Database server
   -database, -d <service> Database service name
-  -var, -D key=value      Variable substitution (can be specified multiple times)
+  -var, -v key=value      Variable substitution (can be specified multiple times)
 
 Parameters:
   param=value             Substitution parameters for SQL (deprecated, use -D instead)
