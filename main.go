@@ -55,6 +55,7 @@ type AppParams struct {
 
 var outputsList []string
 var formatsList []string
+var varsList stringSlice
 
 func main() {
 	params := parseFlags()
@@ -120,6 +121,10 @@ func parseFlags() *AppParams {
 	flag.BoolVar(&params.NoHeader, "noheader", false, "Don't print column headers")
 	flag.BoolVar(&params.NoHeader, "H", false, "Don't print column headers (shorthand)")
 
+	// For variables/parameters
+	flag.Var(&varsList, "var", "Variable in format key=value (can be specified multiple times)")
+	flag.Var(&varsList, "v", "Variable in format key=value (shorthand)")
+
 	// For multiple outputs
 	flag.Var((*stringSlice)(&outputsList), "output", "Output file (can be specified multiple times)")
 	flag.Var((*stringSlice)(&outputsList), "o", "Output file (shorthand)")
@@ -128,17 +133,16 @@ func parseFlags() *AppParams {
 	flag.Var((*stringSlice)(&formatsList), "format", "Output format for preceding output")
 	flag.Var((*stringSlice)(&formatsList), "f", "Output format (shorthand)")
 
-	// Custom parsing for parameters
+	// Parse flags
 	flag.Parse()
 
-	// Parse remaining arguments for parameters
-	args := flag.Args()
-	for _, arg := range args {
-		if strings.Contains(arg, "=") {
-			parts := strings.SplitN(arg, "=", 2)
+	// Parse variables from -v/--var flags
+	for _, varPair := range varsList {
+		if strings.Contains(varPair, "=") {
+			parts := strings.SplitN(varPair, "=", 2)
 			params.Params[parts[0]] = parts[1]
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: Unknown parameter: %s\n", arg)
+			fmt.Fprintf(os.Stderr, "Error: Invalid variable format: %s (expected key=value)\n", varPair)
 			printHelp()
 			os.Exit(1)
 		}
@@ -206,9 +210,10 @@ Options:
   -password, -p <password> Database password
   -server, -s <server>    Database server
   -database, -d <service> Database service name
+  -var, -v key=value      Variable substitution (can be specified multiple times)
 
 Parameters:
-  param=value             Substitution parameters for SQL
+  param=value             Substitution parameters for SQL (deprecated, use -v instead)
 
 Formats:
   tsv, csv, html, jira, xls, xlsx
@@ -219,7 +224,7 @@ Connection String Format:
 Examples:
   gocl -i query.sql -o result.csv -f csv
   gocl -c "SELECT * FROM dual" -o output.html -f html
-  gocl -i query.sql -p param1=value1 param2=value2
+  gocl -i query.sql -v param1=value1 -v param2=value2
 `, Version)
 	fmt.Print(helpText)
 }
