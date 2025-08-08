@@ -93,6 +93,7 @@ func parseFlags() *AppParams {
 	flag.BoolVar(&params.Help, "h", false, "Show help message (shorthand)")
 
 	flag.BoolVar(&params.Version, "version", false, "Show version information")
+	flag.BoolVar(&params.Version, "V", false, "Show version information (shorthand)")
 
 	flag.BoolVar(&params.Debug, "debug", false, "Show debug information including executed queries")
 
@@ -135,7 +136,7 @@ func parseFlags() *AppParams {
 	// Parse flags
 	flag.Parse()
 
-	// Parse variables from -v/--var flags
+	// Parse variables from -D/--var flags
 	for _, varPair := range varsList {
 		if strings.Contains(varPair, "=") {
 			parts := strings.SplitN(varPair, "=", 2)
@@ -197,7 +198,7 @@ Usage: gocl [options] [parameters]
 
 Options:
   -help, -h               Show this help message
-  -version, -v            Show version information
+  -version, -V            Show version information
   -debug                  Show debug information including executed queries
   -input, -i <file>       Input SQL file (default: stdin)
   -code, -c <query>       SQL query to execute directly
@@ -209,10 +210,10 @@ Options:
   -password, -p <password> Database password
   -server, -s <server>    Database server
   -database, -d <service> Database service name
-  -var, -v key=value      Variable substitution (can be specified multiple times)
+  -var, -D key=value      Variable substitution (can be specified multiple times)
 
 Parameters:
-  param=value             Substitution parameters for SQL (deprecated, use -v instead)
+  param=value             Substitution parameters for SQL (deprecated, use -D instead)
 
 Formats:
   tsv, csv, html, jira, xls, xlsx
@@ -223,7 +224,7 @@ Connection String Format:
 Examples:
   gocl -i query.sql -o result.csv -f csv
   gocl -c "SELECT * FROM dual" -o output.html -f html
-  gocl -i query.sql -v param1=value1 -v param2=value2
+  gocl -i query.sql -D param1=value1 -D param2=value2
 `, Version)
 	fmt.Print(helpText)
 }
@@ -473,6 +474,8 @@ func getFormatFromExtension(filename string) OutputFormat {
 	case strings.HasSuffix(strings.ToLower(filename), ".html") ||
 		strings.HasSuffix(strings.ToLower(filename), ".htm"):
 		return HTML
+	case strings.HasSuffix(strings.ToLower(filename), ".jira"):
+		return JIRA
 	case strings.HasSuffix(strings.ToLower(filename), ".xls"):
 		return XLS
 	case strings.HasSuffix(strings.ToLower(filename), ".xlsx"):
@@ -714,19 +717,19 @@ func writeJIRA(filename string, columns []string, data [][]string, withHeader bo
 	}
 
 	if withHeader {
-		// Header row
+		// Header row - JIRA format: ||col1||col2||
 		fmt.Fprint(writer, "||")
 		for _, col := range columns {
-			fmt.Fprintf(writer, " %s |", col)
+			fmt.Fprintf(writer, "%s||", col)
 		}
 		fmt.Fprintln(writer)
 	}
 
-	// Data rows
+	// Data rows - JIRA format: |cell1|cell2|
 	for _, row := range data {
 		fmt.Fprint(writer, "|")
 		for _, cell := range row {
-			fmt.Fprintf(writer, " %s |", cell)
+			fmt.Fprintf(writer, "%s|", cell)
 		}
 		fmt.Fprintln(writer)
 	}
