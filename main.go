@@ -42,6 +42,7 @@ type OutputConfig struct {
 type AppParams struct {
 	Help        bool
 	Version     bool
+	Debug       bool
 	InputFile   string
 	QueryCode   string
 	Outputs     []OutputConfig
@@ -92,6 +93,8 @@ func parseFlags() *AppParams {
 
 	flag.BoolVar(&params.Version, "version", false, "Show version information")
 	flag.BoolVar(&params.Version, "v", false, "Show version information (shorthand)")
+
+	flag.BoolVar(&params.Debug, "debug", false, "Show debug information including executed queries")
 
 	flag.StringVar(&params.InputFile, "input", "", "Input SQL file (default stdin)")
 	flag.StringVar(&params.InputFile, "i", "", "Input SQL file (shorthand)")
@@ -192,6 +195,7 @@ Usage: gocl [options] [parameters]
 Options:
   -help, -h               Show this help message
   -version, -v            Show version information
+  -debug                  Show debug information including executed queries
   -input, -i <file>       Input SQL file (default: stdin)
   -code, -c <query>       SQL query to execute directly
   -output, -o <file>      Output file (can be specified multiple times)
@@ -357,6 +361,11 @@ func isCommandSeparator(line string) bool {
 func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) error {
 	// Substitute parameters
 	finalQuery := substituteParams(query, params.Params)
+
+	// Debug output
+	if params.Debug {
+		fmt.Fprintf(os.Stderr, "Executing query #%d:\n%s\n", queryIndex, finalQuery)
+	}
 
 	// Execute query
 	rows, err := db.Query(finalQuery)
