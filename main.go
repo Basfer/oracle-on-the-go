@@ -36,7 +36,6 @@ type ConnectionParams struct {
 type OutputConfig struct {
 	Filename string
 	Format   OutputFormat
-	NoHeader bool
 }
 
 type AppParams struct {
@@ -53,7 +52,6 @@ type AppParams struct {
 
 var outputsList []string
 var formatsList []string
-var noHeaderFlags int
 
 func main() {
 	params := parseFlags()
@@ -66,6 +64,15 @@ func main() {
 	if params.Help {
 		printHelp()
 		return
+	}
+
+	// Determine if running in interactive mode
+	// Interactive mode: no input file specified AND no query code AND stdin is a terminal
+	if params.InputFile == "" && params.QueryCode == "" {
+		stat, _ := os.Stdin.Stat()
+		params.Interactive = (stat.Mode() & os.ModeCharDevice) != 0
+	} else {
+		params.Interactive = false
 	}
 
 	if err := run(params); err != nil {
@@ -113,10 +120,6 @@ func parseFlags() *AppParams {
 	flag.Var((*stringSlice)(&formatsList), "format", "Output format for preceding output")
 	flag.Var((*stringSlice)(&formatsList), "f", "Output format (shorthand)")
 
-	// NoHeader flag (boolean, can be specified multiple times)
-	flag.IntVar(&noHeaderFlags, "noheader", 0, "Don't print column headers (can be specified multiple times)")
-	flag.IntVar(&noHeaderFlags, "H", 0, "Don't print column headers (shorthand)")
-
 	// Custom parsing for parameters
 	flag.Parse()
 
@@ -135,12 +138,6 @@ func parseFlags() *AppParams {
 
 	// Create output configs
 	params.Outputs = createOutputConfigs()
-
-	// Check if running interactively
-	// Interactive mode: no input file specified AND stdin is a terminal
-	stat, _ := os.Stdin.Stat()
-	params.Interactive = (params.InputFile == "" || params.QueryCode != "") &&
-		((stat.Mode() & os.ModeCharDevice) != 0)
 
 	return &params
 }
@@ -162,23 +159,17 @@ func createOutputConfigs() []OutputConfig {
 
 	// If no outputs specified, add default stdout
 	if len(outputsList) == 0 {
-		return []OutputConfig{{Filename: "", Format: TSV, NoHeader: false}}
+		return []OutputConfig{{Filename: "", Format: TSV}}
 	}
 
 	for i, output := range outputsList {
 		config := OutputConfig{
 			Filename: output,
-			NoHeader: false, // Default to false
 		}
 
 		// Set format if specified
 		if i < len(formatsList) && formatsList[i] != "" {
 			config.Format = OutputFormat(formatsList[i])
-		}
-
-		// Set noheader if specified (associate each flag with an output in order)
-		if noHeaderFlags > i {
-			config.NoHeader = true
 		}
 
 		configs = append(configs, config)
@@ -199,7 +190,6 @@ Options:
   -code, -c <query>       SQL query to execute directly
   -output, -o <file>      Output file (can be specified multiple times)
   -format, -f <format>    Output format for preceding -o flag
-  -noheader, -H           Don't print column headers (can be specified multiple times)
   -connect, -C <connstr>  Oracle connection string
   -user, -u <username>    Database username
   -password, -p <password> Database password
@@ -299,7 +289,7 @@ func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 		line := scanner.Text()
 		lineNum++
 
-		// Print prompt ONLY in interactive mode
+		// Print prompt ONLY in interactive mode and only when starting a new query
 		if params.Interactive && buffer.Len() == 0 {
 			fmt.Print("SQL> ")
 		}
@@ -431,20 +421,23 @@ func writeOutput(columns []string, data [][]string, config *OutputConfig, queryI
 		}
 	}
 
+	// Always print headers (noheader functionality removed)
+	withHeader := true
+
 	// Write based on format
 	switch format {
 	case TSV:
-		return writeTSV(config.Filename, columns, data, !config.NoHeader, queryIndex)
+		return writeTSV(config.Filename, columns, data, withHeader, queryIndex)
 	case CSV:
-		return writeCSV(config.Filename, columns, data, !config.NoHeader, queryIndex)
+		return writeCSV(config.Filename, columns, data, withHeader, queryIndex)
 	case HTML:
-		return writeHTML(config.Filename, columns, data, !config.NoHeader, queryIndex)
+		return writeHTML(config.Filename, columns, data, withHeader, queryIndex)
 	case JIRA:
-		return writeJIRA(config.Filename, columns, data, !config.NoHeader, queryIndex)
+		return writeJIRA(config.Filename, columns, data, withHeader, queryIndex)
 	case XLS, XLSX:
-		return writeExcel(config.Filename, columns, data, !config.NoHeader, queryIndex)
+		return writeExcel(config.Filename, columns, data, withHeader, queryIndex)
 	default:
-		return writeTSV(config.Filename, columns, data, !config.NoHeader, queryIndex)
+		return writeTSV(config.Filename, columns, data, withHeader, queryIndex)
 	}
 }
 
