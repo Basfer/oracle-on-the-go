@@ -1,647 +1,808 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
-	"bufio"
 
 	_ "github.com/sijms/go-ora/v2"
 	"github.com/xuri/excelize/v2"
 )
 
-type Config struct {
-	inputFile  string
-	queryCode  string
-	outputFile string
-	format     string
-	noHeader   bool
-	help       bool
+type OutputFormat string
+
+const (
+	TSV  OutputFormat = "tsv"
+	CSV  OutputFormat = "csv"
+	HTML OutputFormat = "html"
+	JIRA OutputFormat = "jira"
+	XLS  OutputFormat = "xls"
+	XLSX OutputFormat = "xlsx"
+)
+
+type ConnectionParams struct {
+	User     string
+	Password string
+	Server   string
+	Port     string
+	Service  string
+	ConnStr  string
 }
 
+type OutputConfig struct {
+	Filename string
+	Format   OutputFormat
+	NoHeader bool
+}
+
+type AppParams struct {
+	Help        bool
+	Version     bool
+	Debug       bool
+	InputFile   string
+	QueryCode   string
+	Outputs     []OutputConfig
+	ConnectStr  string
+	ConnParams  ConnectionParams
+	Params      map[string]string
+	Interactive bool
+	NoHeader    bool
+}
+
+var outputsList []string
+var formatsList []string
+var varsList stringSlice
+
 func main() {
-	var config Config
-	
-	flag.StringVar(&config.inputFile, "input", "", "SQL file to execute")
-	flag.StringVar(&config.inputFile, "i", "", "SQL file to execute (shorthand)")
-	
-	flag.StringVar(&config.queryCode, "code", "", "SQL query to execute")
-	flag.StringVar(&config.queryCode, "c", "", "SQL query to execute (shorthand)")
-	
-	flag.StringVar(&config.outputFile, "output", "", "Output file name")
-	flag.StringVar(&config.outputFile, "o", "", "Output file name (shorthand)")
-	
-	flag.StringVar(&config.format, "format", "", "Output format (tsv, csv, jira, html, xls, xlsx)")
-	flag.StringVar(&config.format, "f", "", "Output format (tsv, csv, jira, html, xls, xlsx) (shorthand)")
-	
-	flag.BoolVar(&config.noHeader, "noheader", false, "Don't output headers")
-	flag.BoolVar(&config.noHeader, "H", false, "Don't output headers (shorthand)")
-	
-	flag.BoolVar(&config.help, "help", false, "Show help message")
-	flag.BoolVar(&config.help, "h", false, "Show help message (shorthand)")
-	
-	flag.Parse()
-	
-	// Показываем помощь, если запрошено
-	if config.help {
-		showHelp()
+	params := parseFlags()
+
+	if params.Version {
+		fmt.Printf("gocl version %s\n", Version)
 		return
 	}
-	
-	// Определяем формат
-	format := determineFormat(config.format, config.outputFile)
-	config.format = format
-	
-	// Проверяем формат
-	validFormats := map[string]bool{
-		"tsv": true, "csv": true, "jira": true, 
-		"html": true, "xls": true, "xlsx": true,
+
+	if params.Help {
+		printHelp()
+		return
 	}
-	
-	if !validFormats[config.format] {
-		fmt.Fprintf(os.Stderr, "Error: format must be 'tsv', 'csv', 'jira', 'html', 'xls' or 'xlsx'\n\n")
-		showHelp()
-		os.Exit(1)
-	}
-	
-	// Для форматов Excel обязательно должен быть указан выходной файл
-	if (config.format == "xls" || config.format == "xlsx") && config.outputFile == "" {
-		fmt.Fprintf(os.Stderr, "Error: output file (-o) must be specified for Excel formats\n\n")
-		showHelp()
-		os.Exit(1)
-	}
-	
-	// Проверяем, что указан хотя бы один источник запросов
-	if config.inputFile == "" && config.queryCode == "" && len(flag.Args()) == 0 {
-		// Проверяем, есть ли данные в stdin
+
+	// Determine if running in interactive mode
+	// Interactive mode: no input file specified AND no query code AND stdin is a terminal
+	if params.InputFile == "" && params.QueryCode == "" {
 		stat, _ := os.Stdin.Stat()
-		if (stat.Mode() & os.ModeCharDevice) != 0 {
-			// stdin пуст и не указаны источники запросов
-			fmt.Fprintf(os.Stderr, "Error: must specify -input, -code, or provide SQL via stdin\n\n")
-			showHelp()
+		params.Interactive = (stat.Mode() & os.ModeCharDevice) != 0
+	} else {
+		params.Interactive = false
+	}
+
+	if err := run(params); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func parseFlags() *AppParams {
+	var params AppParams
+	params.Params = make(map[string]string)
+
+	flag.BoolVar(&params.Help, "help", false, "Show help message")
+	flag.BoolVar(&params.Help, "h", false, "Show help message (shorthand)")
+
+	flag.BoolVar(&params.Version, "version", false, "Show version information")
+	flag.BoolVar(&params.Version, "V", false, "Show version information (shorthand)")
+
+	flag.BoolVar(&params.Debug, "debug", false, "Show debug information including executed queries")
+
+	flag.StringVar(&params.InputFile, "input", "", "Input SQL file (default stdin)")
+	flag.StringVar(&params.InputFile, "i", "", "Input SQL file (shorthand)")
+
+	flag.StringVar(&params.QueryCode, "code", "", "SQL query to execute")
+	flag.StringVar(&params.QueryCode, "c", "", "SQL query to execute (shorthand)")
+
+	flag.StringVar(&params.ConnectStr, "connect", "", "Oracle connection string")
+	flag.StringVar(&params.ConnectStr, "C", "", "Oracle connection string (shorthand)")
+
+	flag.StringVar(&params.ConnParams.User, "user", "", "Database username")
+	flag.StringVar(&params.ConnParams.User, "u", "", "Database username (shorthand)")
+
+	flag.StringVar(&params.ConnParams.Password, "password", "", "Database password")
+	flag.StringVar(&params.ConnParams.Password, "p", "", "Database password (shorthand)")
+
+	flag.StringVar(&params.ConnParams.Server, "server", "", "Database server")
+	flag.StringVar(&params.ConnParams.Server, "s", "", "Database server (shorthand)")
+
+	flag.StringVar(&params.ConnParams.Service, "database", "", "Database service name")
+	flag.StringVar(&params.ConnParams.Service, "d", "", "Database service name (shorthand)")
+
+	flag.BoolVar(&params.NoHeader, "noheader", false, "Don't print column headers")
+	flag.BoolVar(&params.NoHeader, "H", false, "Don't print column headers (shorthand)")
+
+	// For variables/parameters
+	flag.Var(&varsList, "var", "Variable in format key=value (can be specified multiple times)")
+	flag.Var(&varsList, "v", "Variable in format key=value (shorthand)")
+
+	// For multiple outputs
+	flag.Var((*stringSlice)(&outputsList), "output", "Output file (can be specified multiple times)")
+	flag.Var((*stringSlice)(&outputsList), "o", "Output file (shorthand)")
+
+	// For multiple formats
+	flag.Var((*stringSlice)(&formatsList), "format", "Output format for preceding output")
+	flag.Var((*stringSlice)(&formatsList), "f", "Output format (shorthand)")
+
+	// Parse flags
+	flag.Parse()
+
+	// Parse variables from -D/--var flags
+	for _, varPair := range varsList {
+		if strings.Contains(varPair, "=") {
+			parts := strings.SplitN(varPair, "=", 2)
+			params.Params[parts[0]] = parts[1]
+		} else {
+			fmt.Fprintf(os.Stderr, "Error: Invalid variable format: %s (expected key=value)\n", varPair)
+			printHelp()
 			os.Exit(1)
 		}
 	}
-	
-	// Получаем строку подключения из переменных окружения
-	connString := os.Getenv("ORACLE_CONNECTION_STRING")
-	if connString == "" {
-		fmt.Fprintf(os.Stderr, "Error: ORACLE_CONNECTION_STRING environment variable not set\n")
-		fmt.Fprintf(os.Stderr, "Format: oracle://username:password@hostname:port/service_name\n")
-		fmt.Fprintf(os.Stderr, "Example: oracle://scott:tiger@localhost:1521/XE\n\n")
-		showHelp()
-		os.Exit(1)
+
+	// Create output configs
+	params.Outputs = createOutputConfigs(params.NoHeader)
+
+	return &params
+}
+
+// Helper types for multiple flag values
+type stringSlice []string
+
+func (s *stringSlice) String() string {
+	return fmt.Sprintf("%v", *s)
+}
+
+func (s *stringSlice) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+func createOutputConfigs(noHeader bool) []OutputConfig {
+	var configs []OutputConfig
+
+	// If no outputs specified, add default stdout
+	if len(outputsList) == 0 {
+		return []OutputConfig{{Filename: "", Format: TSV, NoHeader: noHeader}}
 	}
-	
-	// Подключаемся к базе данных
-	db, err := sql.Open("oracle", connString)
+
+	for i, output := range outputsList {
+		config := OutputConfig{
+			Filename: output,
+			NoHeader: noHeader, // Apply global noheader setting
+		}
+
+		// Set format if specified
+		if i < len(formatsList) && formatsList[i] != "" {
+			config.Format = OutputFormat(formatsList[i])
+		}
+
+		configs = append(configs, config)
+	}
+
+	return configs
+}
+
+func printHelp() {
+	helpText := fmt.Sprintf(`gocl version %s - Oracle database client
+
+Usage: gocl [options] [parameters]
+
+Options:
+  -help, -h               Show this help message
+  -version, -V            Show version information
+  -debug                  Show debug information including executed queries
+  -input, -i <file>       Input SQL file (default: stdin)
+  -code, -c <query>       SQL query to execute directly
+  -output, -o <file>      Output file (can be specified multiple times)
+  -format, -f <format>    Output format for preceding -o flag
+  -noheader, -H           Don't print column headers
+  -connect, -C <connstr>  Oracle connection string
+  -user, -u <username>    Database username
+  -password, -p <password> Database password
+  -server, -s <server>    Database server
+  -database, -d <service> Database service name
+  -var, -v key=value      Variable substitution (can be specified multiple times)
+
+Parameters:
+  param=value             Substitution parameters for SQL (deprecated, use -D instead)
+
+Formats:
+  tsv, csv, html, jira, xls, xlsx
+
+Connection String Format:
+  oracle://user:password@server:port/service
+
+Examples:
+  gocl -i query.sql -o result.csv -f csv
+  gocl -c "SELECT * FROM dual" -o output.html -f html
+  gocl -i query.sql -D param1=value1 -D param2=value2
+`, Version)
+	fmt.Print(helpText)
+}
+
+func run(params *AppParams) error {
+	// Build connection string
+	connStr, err := buildConnectionString(params)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error connecting to database: %v\n\n", err)
-		showHelp()
-		os.Exit(1)
+		return fmt.Errorf("connection error: %w", err)
+	}
+
+	// Open database connection
+	db, err := sql.Open("oracle", connStr)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
 	}
 	defer db.Close()
-	
-	// Проверяем соединение
+
+	// Test connection
 	if err := db.Ping(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error pinging database: %v\n\n", err)
-		showHelp()
-		os.Exit(1)
+		return fmt.Errorf("failed to ping database: %w", err)
 	}
-	
-	// Получаем SQL команды
-	queries, err := getQueries(config)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting queries: %v\n\n", err)
-		showHelp()
-		os.Exit(1)
-	}
-	
-	if len(queries) == 0 {
-		fmt.Fprintf(os.Stderr, "No queries to execute\n\n")
-		showHelp()
-		os.Exit(1)
-	}
-	
-	// Обработка в зависимости от формата
-	if config.format == "xls" || config.format == "xlsx" {
-		err = executeExcelQueries(db, queries, config)
-	} else {
-		err = executeTextQueries(db, queries, config)
-	}
-	
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error executing queries: %v\n\n", err)
-		showHelp()
-		os.Exit(1)
-	}
-}
 
-func showHelp() {
-	fmt.Fprintf(os.Stderr, "Usage: gocl [options]\n\n")
-	fmt.Fprintf(os.Stderr, "Options:\n")
-	fmt.Fprintf(os.Stderr, "  -input, -i string\n")
-	fmt.Fprintf(os.Stderr, "        SQL file to execute\n")
-	fmt.Fprintf(os.Stderr, "  -code, -c string\n")
-	fmt.Fprintf(os.Stderr, "        SQL query to execute\n")
-	fmt.Fprintf(os.Stderr, "  -output, -o string\n")
-	fmt.Fprintf(os.Stderr, "        Output file name\n")
-	fmt.Fprintf(os.Stderr, "  -format, -f string\n")
-	fmt.Fprintf(os.Stderr, "        Output format (tsv, csv, jira, html, xls, xlsx)\n")
-	fmt.Fprintf(os.Stderr, "        If not specified, format is determined by output file extension\n")
-	fmt.Fprintf(os.Stderr, "  -noheader, -H\n")
-	fmt.Fprintf(os.Stderr, "        Don't output headers\n")
-	fmt.Fprintf(os.Stderr, "  -help, -h\n")
-	fmt.Fprintf(os.Stderr, "        Show this help message\n\n")
-	
-	fmt.Fprintf(os.Stderr, "Input sources (in order of priority):\n")
-	fmt.Fprintf(os.Stderr, "  1. -input (-i) file\n")
-	fmt.Fprintf(os.Stderr, "  2. -code (-c) query\n")
-	fmt.Fprintf(os.Stderr, "  3. stdin (pipe or redirect)\n\n")
-	
-	fmt.Fprintf(os.Stderr, "Output formats:\n")
-	fmt.Fprintf(os.Stderr, "  tsv   - Tab Separated Values (default)\n")
-	fmt.Fprintf(os.Stderr, "  csv   - Comma Separated Values\n")
-	fmt.Fprintf(os.Stderr, "  jira  - Jira/Confluence table format\n")
-	fmt.Fprintf(os.Stderr, "  html  - HTML table format\n")
-	fmt.Fprintf(os.Stderr, "  xls   - Excel 97-2003 format\n")
-	fmt.Fprintf(os.Stderr, "  xlsx  - Excel 2007+ format\n\n")
-	
-	fmt.Fprintf(os.Stderr, "Format auto-detection by file extension:\n")
-	fmt.Fprintf(os.Stderr, "  .tsv, .txt  → tsv\n")
-	fmt.Fprintf(os.Stderr, "  .csv        → csv\n")
-	fmt.Fprintf(os.Stderr, "  .html, .htm → html\n")
-	fmt.Fprintf(os.Stderr, "  .xls        → xls\n")
-	fmt.Fprintf(os.Stderr, "  .xlsx       → xlsx\n")
-	fmt.Fprintf(os.Stderr, "  .jira       → jira\n\n")
-	
-	fmt.Fprintf(os.Stderr, "Multiple queries separator: '/' (like in sqlplus)\n\n")
-	
-	fmt.Fprintf(os.Stderr, "Environment variable:\n")
-	fmt.Fprintf(os.Stderr, "  ORACLE_CONNECTION_STRING - Oracle connection string\n")
-	fmt.Fprintf(os.Stderr, "    Format: oracle://username:password@hostname:port/service_name\n")
-	fmt.Fprintf(os.Stderr, "    Example: oracle://scott:tiger@localhost:1521/XE\n")
-	fmt.Fprintf(os.Stderr, "    With special characters: oracle://user:p%%40ssw0rd@host:1521/ORCL\n\n")
-	
-	fmt.Fprintf(os.Stderr, "Examples:\n")
-	fmt.Fprintf(os.Stderr, "  export ORACLE_CONNECTION_STRING=\"oracle://user:pass@localhost:1521/XE\"\n")
-	fmt.Fprintf(os.Stderr, "  gocl -c \"SELECT * FROM dual\" -o result.csv\n")
-	fmt.Fprintf(os.Stderr, "  gocl -i queries.sql -f html\n")
-	fmt.Fprintf(os.Stderr, "  echo \"SELECT * FROM dual; / SELECT 1 FROM dual;\" | gocl -o results.xlsx\n")
-	fmt.Fprintf(os.Stderr, "  cat queries.sql | gocl -f jira > output.jira\n")
-}
-
-func determineFormat(formatFlag string, outputFile string) string {
-	// Если формат явно указан через флаг, используем его
-	if formatFlag != "" {
-		return formatFlag
-	}
-	
-	// Если формат не указан, пытаемся определить по расширению файла
-	if outputFile != "" {
-		ext := strings.ToLower(filepath.Ext(outputFile))
-		switch ext {
-		case ".csv":
-			return "csv"
-		case ".html", ".htm":
-			return "html"
-		case ".xls":
-			return "xls"
-		case ".xlsx":
-			return "xlsx"
-		case ".jira":
-			return "jira"
-		default:
-			// По умолчанию TSV для любых других расширений или отсутствия расширения
-			return "tsv"
-		}
-	}
-	
-	// Если нет ни флага формата, ни выходного файла, используем TSV по умолчанию
-	return "tsv"
-}
-
-func getQueries(config Config) ([]string, error) {
-	var lines []string
-	
-	// Получаем строки из источника
-	if config.inputFile != "" {
-		// Читаем файл построчно
-		file, err := os.Open(config.inputFile)
+	// Get input reader
+	var reader io.Reader
+	if params.QueryCode != "" {
+		reader = strings.NewReader(params.QueryCode)
+	} else if params.InputFile != "" {
+		file, err := os.Open(params.InputFile)
 		if err != nil {
-			return nil, fmt.Errorf("error opening file %s: %v", config.inputFile, err)
+			return fmt.Errorf("failed to open input file: %w", err)
 		}
 		defer file.Close()
-		
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			lines = append(lines, scanner.Text())
-		}
-		if err := scanner.Err(); err != nil {
-			return nil, fmt.Errorf("error reading file %s: %v", config.inputFile, err)
-		}
-	} else if config.queryCode != "" {
-		// Разбиваем код на строки
-		lines = strings.Split(config.queryCode, "\n")
+		reader = file
 	} else {
-		// Читаем из stdin построчно
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			lines = append(lines, scanner.Text())
-		}
-		if err := scanner.Err(); err != nil {
-			return nil, fmt.Errorf("error reading from stdin: %v", err)
-		}
+		reader = os.Stdin
 	}
-	
-	// Обрабатываем строки и разделяем команды
-	var queries []string
-	var currentQuery strings.Builder
-	
-	for _, line := range lines {
-		// Удаляем пробельные символы с начала и конца строки
-		trimmedLine := strings.TrimSpace(line)
-		
-		// Проверяем, является ли строка разделителем команд
-		if trimmedLine != "" && strings.Trim(trimmedLine, "/") == "" {
-			// Это строка-разделитель (содержит только символы "/")
-			// Завершаем текущий запрос
-			if currentQuery.Len() > 0 {
-				query := strings.TrimSpace(currentQuery.String())
-				if query != "" {
-					queries = append(queries, query)
-				}
-				currentQuery.Reset()
-			}
-		} else {
-			// Это обычная строка, добавляем её к текущему запросу
-			if currentQuery.Len() > 0 {
-				currentQuery.WriteString("\n")
-			}
-			currentQuery.WriteString(line)
-		}
-	}
-	
-	// Не забываем добавить последний запрос, если он есть
-	if currentQuery.Len() > 0 {
-		query := strings.TrimSpace(currentQuery.String())
-		if query != "" {
-			queries = append(queries, query)
-		}
-	}
-	
-	// Очищаем команды от точки с запятой в конце
-	var result []string
-	for _, query := range queries {
-		// Удаляем точку с запятой в конце, если она есть
-		query = strings.TrimSuffix(query, ";")
-		// Еще раз удаляем пробельные символы
-		query = strings.TrimSpace(query)
-		
-		if query != "" {
-			result = append(result, query)
-		}
-	}
-	
-	return result, nil
-}
 
-func executeTextQueries(db *sql.DB, queries []string, config Config) error {
-	// Определяем выходной поток
-	var output io.Writer
-	if config.outputFile != "" {
-		file, err := os.Create(config.outputFile)
-		if err != nil {
-			return fmt.Errorf("error creating output file: %v", err)
-		}
-		defer file.Close()
-		output = file
-	} else {
-		output = os.Stdout
+	// Process commands
+	if err := processCommands(db, reader, params); err != nil {
+		return err
 	}
-	
-	// Для HTML формата выводим начальный тег, если это не файл
-	if config.format == "html" && config.outputFile == "" {
-		fmt.Fprintln(output, "<!DOCTYPE html>")
-		fmt.Fprintln(output, "<html>")
-		fmt.Fprintln(output, "<head>")
-		fmt.Fprintln(output, "    <meta charset=\"UTF-8\">")
-		fmt.Fprintln(output, "    <title>Query Results</title>")
-		fmt.Fprintln(output, "    <style>")
-		fmt.Fprintln(output, "        table { border-collapse: collapse; margin: 20px 0; }")
-		fmt.Fprintln(output, "        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }")
-		fmt.Fprintln(output, "        th { background-color: #f2f2f2; }")
-		fmt.Fprintln(output, "    </style>")
-		fmt.Fprintln(output, "</head>")
-		fmt.Fprintln(output, "<body>")
-	}
-	
-	// Выполняем запросы
-	for i, query := range queries {
-		if i > 0 && config.outputFile == "" && config.format != "html" {
-			fmt.Fprintln(output, "") // Пустая строка между результатами для не-HTML форматов
-		}
-		
-		if err := executeTextQuery(db, query, output, config); err != nil {
-			fmt.Fprintf(os.Stderr, "Error executing query %v: %v\n", query, err)
-			continue
-		}
-	}
-	
-	// Для HTML формата выводим закрывающие теги, если это не файл
-	if config.format == "html" && config.outputFile == "" {
-		fmt.Fprintln(output, "</body>")
-		fmt.Fprintln(output, "</html>")
-	}
-	
+
 	return nil
 }
 
-func executeTextQuery(db *sql.DB, query string, output io.Writer, config Config) error {
-	// Пропускаем пустые запросы
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil
+func buildConnectionString(params *AppParams) (string, error) {
+	// If connection string is provided directly, use it
+	if params.ConnectStr != "" {
+		return params.ConnectStr, nil
 	}
-	
-	// Выполняем запрос
-	rows, err := db.Query(query)
+
+	// If individual parameters are provided, build connection string
+	if params.ConnParams.User != "" && params.ConnParams.Password != "" &&
+		params.ConnParams.Server != "" && params.ConnParams.Service != "" {
+		return fmt.Sprintf("oracle://%s:%s@%s/%s",
+			params.ConnParams.User,
+			params.ConnParams.Password,
+			params.ConnParams.Server,
+			params.ConnParams.Service), nil
+	}
+
+	// Try environment variable
+	if envConnStr := os.Getenv("ORACLE_CONNECTION_STRING"); envConnStr != "" {
+		return envConnStr, nil
+	}
+
+	return "", fmt.Errorf("no valid connection parameters provided")
+}
+
+func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
+	scanner := bufio.NewScanner(reader)
+	var buffer strings.Builder
+	lineNum := 0
+	queryIndex := 1
+
+	// Print initial prompt in interactive mode
+	if params.Interactive {
+		fmt.Print("SQL> ")
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		lineNum++
+
+		// Check for command separator
+		if isCommandSeparator(line) {
+			if buffer.Len() > 0 {
+				query := buffer.String()
+				if err := executeQuery(db, query, params, queryIndex); err != nil {
+					return fmt.Errorf("error executing query at line %d: %w", lineNum, err)
+				}
+				buffer.Reset()
+				queryIndex++
+
+				// Print prompt after executing query in interactive mode
+				if params.Interactive {
+					fmt.Print("SQL> ")
+				}
+			}
+			continue
+		}
+
+		// Add line to buffer
+		if buffer.Len() > 0 {
+			buffer.WriteString("\n")
+		}
+		buffer.WriteString(line)
+	}
+
+	// Process remaining content
+	if buffer.Len() > 0 {
+		query := buffer.String()
+		if err := executeQuery(db, query, params, queryIndex); err != nil {
+			return fmt.Errorf("error executing query: %w", err)
+		}
+	}
+
+	return scanner.Err()
+}
+
+func isCommandSeparator(line string) bool {
+	// Trim whitespace
+	trimmed := strings.TrimSpace(line)
+
+	// Check if line consists only of '/'
+	if trimmed == "" {
+		return false
+	}
+
+	for _, r := range trimmed {
+		if r != '/' {
+			return false
+		}
+	}
+	return true
+}
+
+func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) error {
+	// Clean the query - remove trailing semicolon if present
+	cleanQuery := cleanQuery(query)
+
+	// Substitute parameters
+	finalQuery := substituteParams(cleanQuery, params.Params)
+
+	// Debug output
+	if params.Debug {
+		fmt.Fprintf(os.Stderr, "Executing query #%d:\n%s\n", queryIndex, finalQuery)
+	}
+
+	// Execute query
+	rows, err := db.Query(finalQuery)
 	if err != nil {
-		return fmt.Errorf("error executing query: %v", err)
+		return fmt.Errorf("query execution failed: %w", err)
 	}
 	defer rows.Close()
-	
-	// Получаем имена колонок
+
+	// Get column names
 	columns, err := rows.Columns()
 	if err != nil {
-		return fmt.Errorf("error getting columns: %v", err)
+		return fmt.Errorf("failed to get columns: %w", err)
 	}
-	
-	// Выводим данные в зависимости от формата
-	switch config.format {
-	case "html":
-		return executeQueryHTML(db, query, output, config, columns, rows)
-	default:
-		return executeQueryDefault(output, config, columns, rows)
-	}
-}
 
-func executeExcelQueries(db *sql.DB, queries []string, config Config) error {
-	// Создаем новый Excel файл
-	f := excelize.NewFile()
-	defer func() {
-		if err := f.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error closing Excel file: %v\n", err)
-		}
-	}()
-	
-	// Удаляем дефолтный лист
-	f.DeleteSheet(f.GetSheetName(0))
-	
-	// Выполняем каждый запрос и сохраняем в отдельную вкладку
-	for i, query := range queries {
-		query = strings.TrimSpace(query)
-		if query == "" {
-			continue
-		}
-		
-		// Создаем имя вкладки
-		sheetName := fmt.Sprintf("Query%d", i+1)
-		if i == 0 {
-			f.SetSheetName(f.GetSheetName(0), sheetName)
-		} else {
-			f.NewSheet(sheetName)
-		}
-		
-		// Выполняем запрос
-		rows, err := db.Query(query)
-		if err != nil {
-			return fmt.Errorf("error executing query %d: %v", i+1, err)
-		}
-		
-		// Получаем имена колонок
-		columns, err := rows.Columns()
-		if err != nil {
-			rows.Close()
-			return fmt.Errorf("error getting columns for query %d: %v", i+1, err)
-		}
-		
-		// Записываем заголовки, если нужно
-		rowNum := 1
-		if !config.noHeader && len(columns) > 0 {
-			for colIdx, colName := range columns {
-				cell, _ := excelize.CoordinatesToCellName(colIdx+1, rowNum)
-				f.SetCellValue(sheetName, cell, colName)
-			}
-			rowNum++
-		}
-		
-		// Обрабатываем строки результата
-		for rows.Next() {
-			// Создаем слайс для значений
-			values := make([]interface{}, len(columns))
-			valuePtrs := make([]interface{}, len(columns))
-			for j := range values {
-				valuePtrs[j] = &values[j]
-			}
-			
-			// Сканируем значения
-			if err := rows.Scan(valuePtrs...); err != nil {
-				rows.Close()
-				return fmt.Errorf("error scanning row for query %d: %v", i+1, err)
-			}
-			
-			// Записываем значения в ячейки
-			for colIdx, v := range values {
-				cell, _ := excelize.CoordinatesToCellName(colIdx+1, rowNum)
-				if v == nil {
-					f.SetCellValue(sheetName, cell, "")
-				} else {
-					f.SetCellValue(sheetName, cell, v)
-				}
-			}
-			rowNum++
-		}
-		
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return fmt.Errorf("error iterating rows for query %d: %v", i+1, err)
-		}
-		
-		rows.Close()
-	}
-	
-	// Сохраняем файл
-	if err := f.SaveAs(config.outputFile); err != nil {
-		return fmt.Errorf("error saving Excel file: %v", err)
-	}
-	
-	return nil
-}
-
-func executeQueryHTML(db *sql.DB, query string, output io.Writer, config Config, columns []string, rows *sql.Rows) error {
-	// Начало таблицы HTML
-	fmt.Fprintln(output, "<table>")
-	
-	// Выводим заголовки, если нужно
-	if !config.noHeader && len(columns) > 0 {
-		fmt.Fprintln(output, "    <thead>")
-		fmt.Fprint(output, "        <tr>")
-		for _, col := range columns {
-			fmt.Fprintf(output, "<th>%s</th>", escapeHTML(col))
-		}
-		fmt.Fprintln(output, "</tr>")
-		fmt.Fprintln(output, "    </thead>")
-	}
-	
-	// Начало тела таблицы
-	fmt.Fprintln(output, "    <tbody>")
-	
-	// Обрабатываем строки результата
+	// Read all rows
+	var data [][]string
 	for rows.Next() {
-		// Создаем слайс для значений
+		// Create a slice to hold the values
 		values := make([]interface{}, len(columns))
 		valuePtrs := make([]interface{}, len(columns))
 		for i := range values {
 			valuePtrs[i] = &values[i]
 		}
-		
-		// Сканируем значения
-		if err := rows.Scan(valuePtrs...); err != nil {
-			return fmt.Errorf("error scanning row: %v", err)
-		}
-		
-		// Выводим строку таблицы
-		fmt.Fprint(output, "        <tr>")
-		for _, v := range values {
-			var cell string
-			if v == nil {
-				cell = ""
-			} else {
-				cell = fmt.Sprintf("%v", v)
-			}
-			fmt.Fprintf(output, "<td>%s</td>", escapeHTML(cell))
-		}
-		fmt.Fprintln(output, "</tr>")
-	}
-	
-	// Конец тела таблицы
-	fmt.Fprintln(output, "    </tbody>")
-	
-	// Конец таблицы
-	fmt.Fprintln(output, "</table>")
-	
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating rows: %v", err)
-	}
-	
-	return nil
-}
 
-func executeQueryDefault(output io.Writer, config Config, columns []string, rows *sql.Rows) error {
-	// Для формата Jira выводим заголовок таблицы
-	if config.format == "jira" && !config.noHeader && len(columns) > 0 {
-		// Выводим заголовок таблицы Jira
-		fmt.Fprintln(output, "||"+strings.Join(columns, "||")+"||")
-	} else if !config.noHeader && len(columns) > 0 && config.format != "jira" {
-		// Для других форматов
-		header := formatRow(columns, config.format)
-		fmt.Fprintln(output, header)
-	}
-	
-	// Обрабатываем строки результата
-	for rows.Next() {
-		// Создаем слайс для значений
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-		
-		// Сканируем значения
+		// Scan the row
 		if err := rows.Scan(valuePtrs...); err != nil {
-			return fmt.Errorf("error scanning row: %v", err)
+			return fmt.Errorf("failed to scan row: %w", err)
 		}
-		
-		// Конвертируем значения в строки
-		strValues := make([]string, len(columns))
+
+		// Convert values to strings
+		row := make([]string, len(columns))
 		for i, v := range values {
 			if v == nil {
-				strValues[i] = ""
+				row[i] = "NULL"
 			} else {
-				strValues[i] = fmt.Sprintf("%v", v)
+				row[i] = fmt.Sprintf("%v", v)
 			}
 		}
-		
-		// Форматируем и выводим строку
-		formattedRow := formatRow(strValues, config.format)
-		fmt.Fprintln(output, formattedRow)
+		data = append(data, row)
 	}
-	
+
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating rows: %v", err)
+		return fmt.Errorf("error iterating rows: %w", err)
 	}
-	
+
+	// Output results
+	for _, output := range params.Outputs {
+		if err := writeOutput(columns, data, &output, queryIndex); err != nil {
+			return fmt.Errorf("failed to write output: %w", err)
+		}
+	}
+
 	return nil
 }
 
-func formatRow(values []string, format string) string {
-	switch format {
-	case "csv":
-		return formatCSV(values)
-	case "jira":
-		return formatJira(values)
-	default: // tsv
-		return formatTSV(values)
+func cleanQuery(query string) string {
+	// Trim whitespace
+	trimmed := strings.TrimSpace(query)
+
+	// Remove trailing semicolon if present
+	for strings.HasSuffix(trimmed, ";") {
+		trimmed = strings.TrimSuffix(trimmed, ";")
+		trimmed = strings.TrimSpace(trimmed)
 	}
+
+	return trimmed
 }
 
-func formatTSV(values []string) string {
-	return strings.Join(values, "\t")
+func substituteParams(query string, params map[string]string) string {
+	result := query
+	for key, value := range params {
+		placeholder := "&" + key
+		result = strings.ReplaceAll(result, placeholder, value)
+	}
+	return result
 }
 
-func formatCSV(values []string) string {
-	var result []string
-	for _, v := range values {
-		// Экранируем значения с запятыми, кавычками и переводами строк
-		if strings.ContainsAny(v, ",\"\n") {
-			// Удваиваем кавычки внутри строки
-			escaped := strings.ReplaceAll(v, "\"", "\"\"")
-			result = append(result, "\""+escaped+"\"")
-		} else {
-			result = append(result, v)
+func writeOutput(columns []string, data [][]string, config *OutputConfig, queryIndex int) error {
+	// Determine format if not specified
+	format := config.Format
+	if format == "" {
+		if config.Filename != "" {
+			format = getFormatFromExtension(config.Filename)
+		}
+		if format == "" {
+			format = TSV
 		}
 	}
-	return strings.Join(result, ",")
-}
 
-func formatJira(values []string) string {
-	// Формат таблицы для Jira/Confluence:
-	// |value1|value2|value3|
-	
-	// Экранируем символы, которые могут сломать таблицу
-	escapedValues := make([]string, len(values))
-	for i, v := range values {
-		// Заменяем | на \|
-		escaped := strings.ReplaceAll(v, "|", "\\|")
-		// Заменяем переводы строк на пробелы
-		escaped = strings.ReplaceAll(escaped, "\n", " ")
-		escapedValues[i] = escaped
+	// Use the NoHeader setting from the output config
+	withHeader := !config.NoHeader
+
+	// Write based on format
+	switch format {
+	case TSV:
+		return writeTSV(config.Filename, columns, data, withHeader, queryIndex)
+	case CSV:
+		return writeCSV(config.Filename, columns, data, withHeader, queryIndex)
+	case HTML:
+		return writeHTML(config.Filename, columns, data, withHeader, queryIndex)
+	case JIRA:
+		return writeJIRA(config.Filename, columns, data, withHeader, queryIndex)
+	case XLS, XLSX:
+		return writeExcel(config.Filename, columns, data, withHeader, queryIndex)
+	default:
+		return writeTSV(config.Filename, columns, data, withHeader, queryIndex)
 	}
-	
-	return "|" + strings.Join(escapedValues, "|") + "|"
 }
 
-func escapeHTML(s string) string {
-	// Простое экранирование HTML символов
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "<")
-	s = strings.ReplaceAll(s, ">", ">")
-	s = strings.ReplaceAll(s, "\"", "&quot;")
-	s = strings.ReplaceAll(s, "'", "&#39;")
-	return s
+func getFormatFromExtension(filename string) OutputFormat {
+	switch {
+	case strings.HasSuffix(strings.ToLower(filename), ".csv"):
+		return CSV
+	case strings.HasSuffix(strings.ToLower(filename), ".html") ||
+		strings.HasSuffix(strings.ToLower(filename), ".htm"):
+		return HTML
+	case strings.HasSuffix(strings.ToLower(filename), ".jira"):
+		return JIRA
+	case strings.HasSuffix(strings.ToLower(filename), ".xls"):
+		return XLS
+	case strings.HasSuffix(strings.ToLower(filename), ".xlsx"):
+		return XLSX
+	default:
+		return TSV
+	}
+}
+
+func writeTSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	var file *os.File
+	var err error
+
+	// For subsequent queries, append to file
+	if queryIndex > 1 && filename != "" {
+		file, err = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+	} else if filename == "" {
+		file = os.Stdout
+	} else {
+		file, err = os.Create(filename)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if filename != "" {
+		defer file.Close()
+	}
+
+	writer := bufio.NewWriter(file)
+	defer writer.Flush()
+
+	// Add separator between results
+	if queryIndex > 1 {
+		fmt.Fprintln(writer, "")
+	}
+
+	if withHeader {
+		fmt.Fprintln(writer, strings.Join(columns, "\t"))
+	}
+
+	for _, row := range data {
+		fmt.Fprintln(writer, strings.Join(row, "\t"))
+	}
+
+	return nil
+}
+
+func writeCSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	var file *os.File
+	var err error
+
+	// For subsequent queries, append to file
+	if queryIndex > 1 && filename != "" {
+		file, err = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+	} else if filename == "" {
+		file = os.Stdout
+	} else {
+		file, err = os.Create(filename)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if filename != "" {
+		defer file.Close()
+	}
+
+	writer := bufio.NewWriter(file)
+	defer writer.Flush()
+
+	// Add separator between results
+	if queryIndex > 1 {
+		fmt.Fprintln(writer, "")
+	}
+
+	if withHeader {
+		fmt.Fprintln(writer, strings.Join(columns, ","))
+	}
+
+	for _, row := range data {
+		fmt.Fprintln(writer, strings.Join(row, ","))
+	}
+
+	return nil
+}
+
+func writeHTML(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	// For first query, create new file with header
+	if queryIndex == 1 {
+		return writeHTMLNew(filename, columns, data, withHeader)
+	}
+
+	// For subsequent queries, append to existing file
+	return writeHTMLAppend(filename, columns, data, withHeader)
+}
+
+func writeHTMLNew(filename string, columns []string, data [][]string, withHeader bool) error {
+	var file *os.File
+	var err error
+
+	if filename == "" {
+		file = os.Stdout
+	} else {
+		file, err = os.Create(filename)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+	}
+
+	writer := bufio.NewWriter(file)
+	defer writer.Flush()
+
+	// Write HTML header
+	header := `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Query Results</title>
+    <style>
+        table { border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+`
+	fmt.Fprint(writer, header)
+
+	// Write first table
+	if err := writeHTMLTable(writer, columns, data, withHeader); err != nil {
+		return err
+	}
+
+	// Write HTML footer (will be updated when appending)
+	footer := `
+</body>
+</html>
+`
+	fmt.Fprint(writer, footer)
+
+	return nil
+}
+
+func writeHTMLAppend(filename string, columns []string, data [][]string, withHeader bool) error {
+	if filename == "" {
+		// For stdout, just write the table
+		return writeHTMLTable(os.Stdout, columns, data, withHeader)
+	}
+
+	// Read existing file
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+
+	// Find position to insert new table (before </body>)
+	contentStr := string(content)
+	pos := strings.LastIndex(contentStr, "</body>")
+	if pos == -1 {
+		return fmt.Errorf("invalid HTML file format")
+	}
+
+	// Create new content
+	newContent := contentStr[:pos]
+
+	// Add the new table
+	var tableBuf strings.Builder
+	writer := bufio.NewWriter(&tableBuf)
+	if err := writeHTMLTable(writer, columns, data, withHeader); err != nil {
+		return err
+	}
+	writer.Flush()
+
+	newContent += tableBuf.String()
+	newContent += contentStr[pos:]
+
+	// Write back to file
+	return os.WriteFile(filename, []byte(newContent), 0644)
+}
+
+func writeHTMLTable(writer io.Writer, columns []string, data [][]string, withHeader bool) error {
+	fmt.Fprintln(writer, "    <table>")
+
+	if withHeader {
+		fmt.Fprintln(writer, "        <thead>")
+		fmt.Fprintln(writer, "            <tr>")
+		for _, col := range columns {
+			fmt.Fprintf(writer, "                <th>%s</th>\n", col)
+		}
+		fmt.Fprintln(writer, "            </tr>")
+		fmt.Fprintln(writer, "        </thead>")
+	}
+
+	fmt.Fprintln(writer, "        <tbody>")
+	for _, row := range data {
+		fmt.Fprintln(writer, "            <tr>")
+		for _, cell := range row {
+			fmt.Fprintf(writer, "                <td>%s</td>\n", cell)
+		}
+		fmt.Fprintln(writer, "            </tr>")
+	}
+	fmt.Fprintln(writer, "        </tbody>")
+	fmt.Fprintln(writer, "    </table>")
+
+	return nil
+}
+
+func writeJIRA(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	var file *os.File
+	var err error
+
+	// For subsequent queries, append to file
+	if queryIndex > 1 && filename != "" {
+		file, err = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
+	} else if filename == "" {
+		file = os.Stdout
+	} else {
+		file, err = os.Create(filename)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if filename != "" {
+		defer file.Close()
+	}
+
+	writer := bufio.NewWriter(file)
+	defer writer.Flush()
+
+	// Add separator between results
+	if queryIndex > 1 {
+		fmt.Fprintln(writer, "")
+	}
+
+	if withHeader {
+		// Header row - JIRA format: ||col1||col2||
+		fmt.Fprint(writer, "||")
+		for _, col := range columns {
+			fmt.Fprintf(writer, "%s||", col)
+		}
+		fmt.Fprintln(writer)
+	}
+
+	// Data rows - JIRA format: |cell1|cell2|
+	for _, row := range data {
+		fmt.Fprint(writer, "|")
+		for _, cell := range row {
+			fmt.Fprintf(writer, "%s|", cell)
+		}
+		fmt.Fprintln(writer)
+	}
+
+	return nil
+}
+
+func writeExcel(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+	var f *excelize.File
+	var err error
+
+	// For subsequent queries, open existing file
+	if queryIndex > 1 {
+		f, err = excelize.OpenFile(filename)
+		if err != nil {
+			return err
+		}
+	} else {
+		f = excelize.NewFile()
+		// Remove default sheet
+		f.DeleteSheet("Sheet1")
+	}
+
+	defer func() {
+		if err := f.Close(); err != nil {
+			fmt.Printf("Error closing Excel file: %v\n", err)
+		}
+	}()
+
+	// Create new sheet for this query
+	sheetName := fmt.Sprintf("Results%d", queryIndex)
+	f.NewSheet(sheetName)
+
+	// Write header if needed
+	if withHeader {
+		for i, col := range columns {
+			cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+			f.SetCellValue(sheetName, cell, col)
+		}
+	}
+
+	// Write data
+	for i, row := range data {
+		for j, cell := range row {
+			rowNum := i + 1
+			if withHeader {
+				rowNum++
+			}
+			cellName, _ := excelize.CoordinatesToCellName(j+1, rowNum)
+			f.SetCellValue(sheetName, cellName, cell)
+		}
+	}
+
+	// Save file
+	if err := f.SaveAs(filename); err != nil {
+		return fmt.Errorf("failed to save Excel file: %w", err)
+	}
+
+	return nil
 }
