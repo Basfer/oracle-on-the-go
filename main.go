@@ -584,46 +584,6 @@ func getFormatFromExtension(filename string) OutputFormat {
 	}
 }
 
-func writeTSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
-	var file *os.File
-	var err error
-
-	// For subsequent queries, append to file
-	if queryIndex > 1 && filename != "" {
-		file, err = os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, 0644)
-	} else if filename == "" {
-		file = os.Stdout
-	} else {
-		file, err = os.Create(filename)
-	}
-
-	if err != nil {
-		return err
-	}
-
-	if filename != "" {
-		defer file.Close()
-	}
-
-	writer := bufio.NewWriter(file)
-	defer writer.Flush()
-
-	// Add separator between results
-	if queryIndex > 1 {
-		fmt.Fprintln(writer, "")
-	}
-
-	if withHeader {
-		fmt.Fprintln(writer, strings.Join(columns, "\t"))
-	}
-
-	for _, row := range data {
-		fmt.Fprintln(writer, strings.Join(row, "\t"))
-	}
-
-	return nil
-}
-
 func writeCSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
 	var file *os.File
 	var err error
@@ -967,5 +927,4 @@ func writeTSV(filename string, columns []string, data [][]string, withHeader boo
 	}
 
 	return nil
-
 }
