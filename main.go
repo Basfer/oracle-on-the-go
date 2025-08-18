@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"database/sql"
 	"flag"
 	"fmt"
@@ -314,9 +313,6 @@ func addTimeoutToConnectionString(connStr string, timeout int) string {
 		return connStr
 	}
 
-	// Parse the connection string to add timeout parameters
-	// The go-ora driver supports various timeout parameters
-
 	// Add timeout parameters as URL query parameters
 	separator := "?"
 	if strings.Contains(connStr, "?") {
@@ -326,9 +322,9 @@ func addTimeoutToConnectionString(connStr string, timeout int) string {
 	// Convert timeout to milliseconds for Oracle driver
 	timeoutMs := timeout * 1000
 
-	// Add connection timeout parameters
-	timeoutParams := fmt.Sprintf("%sconnect_timeout=%d&send_timeout=%d&receive_timeout=%d",
-		separator, timeoutMs, timeoutMs, timeoutMs)
+	// Add connection timeout parameters - using correct go-ora parameter names
+	timeoutParams := fmt.Sprintf("%sCONNECTION TIMEOUT=%d",
+		separator, timeoutMs)
 
 	return connStr + timeoutParams
 }
@@ -413,16 +409,6 @@ func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) e
 		fmt.Fprintf(os.Stderr, "Executing query #%d:\n%s\n", queryIndex, finalQuery)
 	}
 
-	// Set query timeout if specified
-	var cancel func()
-	if params.ConnParams.Timeout > 0 {
-		_, cancelFunc := contextWithTimeout(params.ConnParams.Timeout)
-		cancel = cancelFunc
-		defer cancel()
-
-		// For query timeout, we need to use context (but go-ora has its own timeout handling)
-	}
-
 	// Execute query
 	rows, err := db.Query(finalQuery)
 	if err != nil {
@@ -475,12 +461,6 @@ func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) e
 	}
 
 	return nil
-}
-
-func contextWithTimeout(seconds int) (context.Context, func()) {
-	// This is a placeholder - the actual timeout is handled by the connection string
-	// The go-ora driver uses the connection string parameters for timeout control
-	return nil, func() {}
 }
 
 func cleanQuery(query string) string {
