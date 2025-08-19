@@ -558,7 +558,7 @@ func writeOutput(columns []string, data [][]string, config *OutputConfig, queryI
 	case HTML:
 		return writeHTML(config.Filename, columns, data, withHeader, queryIndex, queryInfo)
 	case JIRA:
-		return writeJIRA(config.Filename, columns, data, withHeader, queryIndex)
+		return writeJIRA(config.Filename, columns, data, withHeader, queryIndex, queryInfo)
 	case XLS, XLSX:
 		return writeExcel(config.Filename, columns, data, withHeader, queryIndex, queryInfo)
 	default:
@@ -613,7 +613,7 @@ func writeTSV(filename string, columns []string, data [][]string, withHeader boo
 		fmt.Fprintln(writer, "")
 	}
 
-	// Write table name as header comment if available
+	// Write table name as header if available
 	if queryInfo.TableName != "" {
 		fmt.Fprintf(writer, "# %s\n", queryInfo.TableName)
 	}
@@ -658,7 +658,7 @@ func writeCSV(filename string, columns []string, data [][]string, withHeader boo
 		fmt.Fprintln(writer, "")
 	}
 
-	// Write table name as header comment if available
+	// Write table name as header if available
 	if queryInfo.TableName != "" {
 		fmt.Fprintf(writer, "# %s\n", queryInfo.TableName)
 	}
@@ -701,7 +701,7 @@ func writeHTMLNew(filename string, columns []string, data [][]string, withHeader
 	writer := bufio.NewWriter(file)
 	defer writer.Flush()
 
-	// Write HTML header
+	// Write HTML header with UTF-8 charset
 	header := `<!DOCTYPE html>
 <html>
 <head>
@@ -802,7 +802,7 @@ func writeHTMLTable(writer io.Writer, columns []string, data [][]string, withHea
 	return nil
 }
 
-func writeJIRA(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+func writeJIRA(filename string, columns []string, data [][]string, withHeader bool, queryIndex int, queryInfo QueryInfo) error {
 	var file *os.File
 	var err error
 
@@ -829,6 +829,11 @@ func writeJIRA(filename string, columns []string, data [][]string, withHeader bo
 	// Add separator between results
 	if queryIndex > 1 {
 		fmt.Fprintln(writer, "")
+	}
+
+	// Write table name as header if available
+	if queryInfo.TableName != "" {
+		fmt.Fprintf(writer, "h1. %s\n\n", queryInfo.TableName)
 	}
 
 	if withHeader {
