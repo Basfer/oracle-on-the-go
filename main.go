@@ -557,13 +557,19 @@ func executeQuery(db *sql.DB, queryInfo QueryInfo, params *AppParams, queryIndex
 			return fmt.Errorf("failed to scan row: %w", err)
 		}
 
-		// Convert values to strings
+		// Convert values to strings with proper formatting
 		row := make([]string, len(columns))
 		for i, v := range values {
 			if v == nil {
 				row[i] = "NULL"
 			} else {
-				row[i] = fmt.Sprintf("%v", v)
+				// Check if it's a time.Time value (date/datetime)
+				if t, ok := v.(time.Time); ok {
+					// Format as "2024-01-15 14:30:25"
+					row[i] = t.Format("2006-01-02 15:04:05")
+				} else {
+					row[i] = fmt.Sprintf("%v", v)
+				}
 			}
 		}
 		data = append(data, row)
