@@ -305,7 +305,6 @@ func detectAndConvertEncoding(file *os.File, debug bool) (io.Reader, error) {
 	n, err := file.Read(buf)
 	if err != nil && err != io.EOF {
 		return nil, err
-
 	}
 
 	// Reset file pointer to beginning
