@@ -319,13 +319,14 @@ func detectAndConvertEncoding(file *os.File, debug bool) (io.Reader, error) {
 		return file, nil
 	}
 
-	// Try to detect encoding - common case is Windows-1251 (Cyrillic)
-	// We'll try Windows-1251 first, then other common encodings
+	// Try to detect encoding - test common encodings
 	encodings := []struct {
 		name    string
 		decoder *charmap.Charmap
 	}{
 		{"windows-1251", charmap.Windows1251},
+		{"cp866", charmap.CodePage866},
+		{"iso-8859-5", charmap.ISO8859_5},
 		{"windows-1252", charmap.Windows1252},
 		{"koi8-r", charmap.KOI8R},
 	}
