@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -53,6 +54,12 @@ type AppParams struct {
 	Params      map[string]string
 	Interactive bool
 	NoHeader    bool
+}
+
+// QueryInfo holds information about a query including its table name
+type QueryInfo struct {
+	Query     string
+	TableName string
 }
 
 var outputsList []string
@@ -332,6 +339,7 @@ func addTimeoutToConnectionString(connStr string, timeout int) string {
 func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 	scanner := bufio.NewScanner(reader)
 	var buffer strings.Builder
+	var commentBuffer strings.Builder
 	lineNum := 0
 	queryIndex := 1
 
@@ -348,10 +356,13 @@ func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 		if isCommandSeparator(line) {
 			if buffer.Len() > 0 {
 				query := buffer.String()
-				if err := executeQuery(db, query, params, queryIndex); err != nil {
+				comment := commentBuffer.String()
+				queryInfo := extractQueryInfo(query, comment)
+				if err := executeQuery(db, queryInfo, params, queryIndex); err != nil {
 					return fmt.Errorf("error executing query at line %d: %w", lineNum, err)
 				}
 				buffer.Reset()
+				commentBuffer.Reset()
 				queryIndex++
 
 				// Print prompt after executing query in interactive mode
@@ -362,17 +373,25 @@ func processCommands(db *sql.DB, reader io.Reader, params *AppParams) error {
 			continue
 		}
 
-		// Add line to buffer
-		if buffer.Len() > 0 {
-			buffer.WriteString("\n")
+		// Check if line is a comment with table name
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmedLine, "--") {
+			commentBuffer.WriteString(line + "\n")
+		} else {
+			// Add line to buffer
+			if buffer.Len() > 0 {
+				buffer.WriteString("\n")
+			}
+			buffer.WriteString(line)
 		}
-		buffer.WriteString(line)
 	}
 
 	// Process remaining content
 	if buffer.Len() > 0 {
 		query := buffer.String()
-		if err := executeQuery(db, query, params, queryIndex); err != nil {
+		comment := commentBuffer.String()
+		queryInfo := extractQueryInfo(query, comment)
+		if err := executeQuery(db, queryInfo, params, queryIndex); err != nil {
 			return fmt.Errorf("error executing query: %w", err)
 		}
 	}
@@ -397,9 +416,36 @@ func isCommandSeparator(line string) bool {
 	return true
 }
 
-func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) error {
+// extractQueryInfo extracts table name from comments and returns QueryInfo
+func extractQueryInfo(query, comment string) QueryInfo {
+	queryInfo := QueryInfo{
+		Query:     query,
+		TableName: "",
+	}
+
+	// Parse comments to find table name
+	lines := strings.Split(comment, "\n")
+	tabRegex := regexp.MustCompile(`--\s*tab\s*=\s*(.+)`)
+
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		if matches := tabRegex.FindStringSubmatch(trimmedLine); len(matches) > 1 {
+			tableName := strings.TrimSpace(matches[1])
+			// Remove any trailing comment markers or extra text
+			if idx := strings.Index(tableName, "--"); idx != -1 {
+				tableName = strings.TrimSpace(tableName[:idx])
+			}
+			queryInfo.TableName = tableName
+			break
+		}
+	}
+
+	return queryInfo
+}
+
+func executeQuery(db *sql.DB, queryInfo QueryInfo, params *AppParams, queryIndex int) error {
 	// Clean the query - remove trailing semicolon if present
-	cleanQuery := cleanQuery(query)
+	cleanQuery := cleanQuery(queryInfo.Query)
 
 	// Substitute parameters
 	finalQuery := substituteParams(cleanQuery, params.Params)
@@ -407,6 +453,9 @@ func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) e
 	// Debug output
 	if params.Debug {
 		fmt.Fprintf(os.Stderr, "Executing query #%d:\n%s\n", queryIndex, finalQuery)
+		if queryInfo.TableName != "" {
+			fmt.Fprintf(os.Stderr, "Table name: %s\n", queryInfo.TableName)
+		}
 	}
 
 	// Execute query
@@ -455,7 +504,7 @@ func executeQuery(db *sql.DB, query string, params *AppParams, queryIndex int) e
 
 	// Output results
 	for _, output := range params.Outputs {
-		if err := writeOutput(columns, data, &output, queryIndex); err != nil {
+		if err := writeOutput(columns, data, &output, queryIndex, queryInfo); err != nil {
 			return fmt.Errorf("failed to write output: %w", err)
 		}
 	}
@@ -485,7 +534,7 @@ func substituteParams(query string, params map[string]string) string {
 	return result
 }
 
-func writeOutput(columns []string, data [][]string, config *OutputConfig, queryIndex int) error {
+func writeOutput(columns []string, data [][]string, config *OutputConfig, queryIndex int, queryInfo QueryInfo) error {
 	// Determine format if not specified
 	format := config.Format
 	if format == "" {
@@ -503,17 +552,17 @@ func writeOutput(columns []string, data [][]string, config *OutputConfig, queryI
 	// Write based on format
 	switch format {
 	case TSV:
-		return writeTSV(config.Filename, columns, data, withHeader, queryIndex)
+		return writeTSV(config.Filename, columns, data, withHeader, queryIndex, queryInfo)
 	case CSV:
-		return writeCSV(config.Filename, columns, data, withHeader, queryIndex)
+		return writeCSV(config.Filename, columns, data, withHeader, queryIndex, queryInfo)
 	case HTML:
-		return writeHTML(config.Filename, columns, data, withHeader, queryIndex)
+		return writeHTML(config.Filename, columns, data, withHeader, queryIndex, queryInfo)
 	case JIRA:
-		return writeJIRA(config.Filename, columns, data, withHeader, queryIndex)
+		return writeJIRA(config.Filename, columns, data, withHeader, queryIndex, queryInfo)
 	case XLS, XLSX:
-		return writeExcel(config.Filename, columns, data, withHeader, queryIndex)
+		return writeExcel(config.Filename, columns, data, withHeader, queryIndex, queryInfo)
 	default:
-		return writeTSV(config.Filename, columns, data, withHeader, queryIndex)
+		return writeTSV(config.Filename, columns, data, withHeader, queryIndex, queryInfo)
 	}
 }
 
@@ -535,7 +584,7 @@ func getFormatFromExtension(filename string) OutputFormat {
 	}
 }
 
-func writeTSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+func writeTSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int, queryInfo QueryInfo) error {
 	var file *os.File
 	var err error
 
@@ -562,6 +611,11 @@ func writeTSV(filename string, columns []string, data [][]string, withHeader boo
 	// Add separator between results
 	if queryIndex > 1 {
 		fmt.Fprintln(writer, "")
+	}
+
+	// Write table name as header if available
+	if queryInfo.TableName != "" {
+		fmt.Fprintf(writer, "# %s\n", queryInfo.TableName)
 	}
 
 	if withHeader {
@@ -575,7 +629,7 @@ func writeTSV(filename string, columns []string, data [][]string, withHeader boo
 	return nil
 }
 
-func writeCSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+func writeCSV(filename string, columns []string, data [][]string, withHeader bool, queryIndex int, queryInfo QueryInfo) error {
 	var file *os.File
 	var err error
 
@@ -604,6 +658,11 @@ func writeCSV(filename string, columns []string, data [][]string, withHeader boo
 		fmt.Fprintln(writer, "")
 	}
 
+	// Write table name as header if available
+	if queryInfo.TableName != "" {
+		fmt.Fprintf(writer, "# %s\n", queryInfo.TableName)
+	}
+
 	if withHeader {
 		fmt.Fprintln(writer, strings.Join(columns, ","))
 	}
@@ -615,17 +674,17 @@ func writeCSV(filename string, columns []string, data [][]string, withHeader boo
 	return nil
 }
 
-func writeHTML(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+func writeHTML(filename string, columns []string, data [][]string, withHeader bool, queryIndex int, queryInfo QueryInfo) error {
 	// For first query, create new file with header
 	if queryIndex == 1 {
-		return writeHTMLNew(filename, columns, data, withHeader)
+		return writeHTMLNew(filename, columns, data, withHeader, queryInfo)
 	}
 
 	// For subsequent queries, append to existing file
-	return writeHTMLAppend(filename, columns, data, withHeader)
+	return writeHTMLAppend(filename, columns, data, withHeader, queryInfo)
 }
 
-func writeHTMLNew(filename string, columns []string, data [][]string, withHeader bool) error {
+func writeHTMLNew(filename string, columns []string, data [][]string, withHeader bool, queryInfo QueryInfo) error {
 	var file *os.File
 	var err error
 
@@ -642,7 +701,7 @@ func writeHTMLNew(filename string, columns []string, data [][]string, withHeader
 	writer := bufio.NewWriter(file)
 	defer writer.Flush()
 
-	// Write HTML header
+	// Write HTML header with UTF-8 charset
 	header := `<!DOCTYPE html>
 <html>
 <head>
@@ -652,6 +711,7 @@ func writeHTMLNew(filename string, columns []string, data [][]string, withHeader
         table { border-collapse: collapse; margin-bottom: 20px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
         th { background-color: #f2f2f2; }
+        .table-title { font-weight: bold; margin-bottom: 10px; font-size: 1.2em; }
     </style>
 </head>
 <body>
@@ -659,7 +719,7 @@ func writeHTMLNew(filename string, columns []string, data [][]string, withHeader
 	fmt.Fprint(writer, header)
 
 	// Write first table
-	if err := writeHTMLTable(writer, columns, data, withHeader); err != nil {
+	if err := writeHTMLTable(writer, columns, data, withHeader, queryInfo); err != nil {
 		return err
 	}
 
@@ -673,10 +733,10 @@ func writeHTMLNew(filename string, columns []string, data [][]string, withHeader
 	return nil
 }
 
-func writeHTMLAppend(filename string, columns []string, data [][]string, withHeader bool) error {
+func writeHTMLAppend(filename string, columns []string, data [][]string, withHeader bool, queryInfo QueryInfo) error {
 	if filename == "" {
 		// For stdout, just write the table
-		return writeHTMLTable(os.Stdout, columns, data, withHeader)
+		return writeHTMLTable(os.Stdout, columns, data, withHeader, queryInfo)
 	}
 
 	// Read existing file
@@ -698,7 +758,7 @@ func writeHTMLAppend(filename string, columns []string, data [][]string, withHea
 	// Add the new table
 	var tableBuf strings.Builder
 	writer := bufio.NewWriter(&tableBuf)
-	if err := writeHTMLTable(writer, columns, data, withHeader); err != nil {
+	if err := writeHTMLTable(writer, columns, data, withHeader, queryInfo); err != nil {
 		return err
 	}
 	writer.Flush()
@@ -710,7 +770,12 @@ func writeHTMLAppend(filename string, columns []string, data [][]string, withHea
 	return os.WriteFile(filename, []byte(newContent), 0644)
 }
 
-func writeHTMLTable(writer io.Writer, columns []string, data [][]string, withHeader bool) error {
+func writeHTMLTable(writer io.Writer, columns []string, data [][]string, withHeader bool, queryInfo QueryInfo) error {
+	// Write table title if available
+	if queryInfo.TableName != "" {
+		fmt.Fprintf(writer, "    <div class=\"table-title\">%s</div>\n", queryInfo.TableName)
+	}
+
 	fmt.Fprintln(writer, "    <table>")
 
 	if withHeader {
@@ -737,7 +802,7 @@ func writeHTMLTable(writer io.Writer, columns []string, data [][]string, withHea
 	return nil
 }
 
-func writeJIRA(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+func writeJIRA(filename string, columns []string, data [][]string, withHeader bool, queryIndex int, queryInfo QueryInfo) error {
 	var file *os.File
 	var err error
 
@@ -766,6 +831,11 @@ func writeJIRA(filename string, columns []string, data [][]string, withHeader bo
 		fmt.Fprintln(writer, "")
 	}
 
+	// Write table name as header if available
+	if queryInfo.TableName != "" {
+		fmt.Fprintf(writer, "h1. %s\n\n", queryInfo.TableName)
+	}
+
 	if withHeader {
 		// Header row - JIRA format: ||col1||col2||
 		fmt.Fprint(writer, "||")
@@ -787,7 +857,7 @@ func writeJIRA(filename string, columns []string, data [][]string, withHeader bo
 	return nil
 }
 
-func writeExcel(filename string, columns []string, data [][]string, withHeader bool, queryIndex int) error {
+func writeExcel(filename string, columns []string, data [][]string, withHeader bool, queryIndex int, queryInfo QueryInfo) error {
 	var f *excelize.File
 	var err error
 
@@ -810,7 +880,14 @@ func writeExcel(filename string, columns []string, data [][]string, withHeader b
 	}()
 
 	// Create new sheet for this query
-	sheetName := fmt.Sprintf("Results%d", queryIndex)
+	sheetName := "Results"
+	if queryInfo.TableName != "" {
+		// Sanitize sheet name (Excel has limitations on sheet names)
+		sheetName = sanitizeSheetName(queryInfo.TableName)
+	} else {
+		sheetName = fmt.Sprintf("Results%d", queryIndex)
+	}
+
 	f.NewSheet(sheetName)
 
 	// Write header if needed
@@ -839,4 +916,30 @@ func writeExcel(filename string, columns []string, data [][]string, withHeader b
 	}
 
 	return nil
+}
+
+// sanitizeSheetName sanitizes Excel sheet names
+func sanitizeSheetName(name string) string {
+	// Excel sheet name limitations:
+	// - Cannot be empty
+	// - Cannot exceed 31 characters
+	// - Cannot contain: \ / ? * [ ]
+
+	// Truncate to 31 characters
+	if len(name) > 31 {
+		name = name[:31]
+	}
+
+	// Remove invalid characters
+	invalidChars := []string{"\\", "/", "?", "*", "[", "]"}
+	for _, char := range invalidChars {
+		name = strings.ReplaceAll(name, char, "_")
+	}
+
+	// Ensure not empty
+	if name == "" {
+		name = "Sheet"
+	}
+
+	return name
 }
