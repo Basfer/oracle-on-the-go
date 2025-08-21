@@ -10,9 +10,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "github.com/sijms/go-ora/v2"
 	"github.com/xuri/excelize/v2"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/transform"
 )
 
 type OutputFormat string
@@ -277,7 +280,12 @@ func run(params *AppParams) error {
 			return fmt.Errorf("failed to open input file: %w", err)
 		}
 		defer file.Close()
-		reader = file
+
+		// Detect and convert encoding if needed
+		reader, err = detectAndConvertEncoding(file, params.Debug)
+		if err != nil {
+			return fmt.Errorf("failed to process input file encoding: %w", err)
+		}
 	} else {
 		reader = os.Stdin
 	}
@@ -288,6 +296,69 @@ func run(params *AppParams) error {
 	}
 
 	return nil
+}
+
+// detectAndConvertEncoding detects the encoding of a file and converts it to UTF-8 if needed
+func detectAndConvertEncoding(file *os.File, debug bool) (io.Reader, error) {
+	// Read first 1024 bytes to detect encoding
+	buf := make([]byte, 1024)
+	n, err := file.Read(buf)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	// Reset file pointer to beginning
+	file.Seek(0, 0)
+
+	// Check for UTF-8 BOM (EF BB BF)
+	if n >= 3 && buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF {
+		if debug {
+			fmt.Fprintf(os.Stderr, "Input file encoding: UTF-8 with BOM (removing BOM)\n")
+		}
+		// Return file with BOM stripped
+		file.Seek(3, 0) // Skip BOM
+		return file, nil
+	}
+
+	// Check if it's already valid UTF-8
+	if utf8.Valid(buf[:n]) {
+		// It's already UTF-8, return as is
+		if debug {
+			fmt.Fprintf(os.Stderr, "Input file encoding: UTF-8 (no conversion needed)\n")
+		}
+		return file, nil
+	}
+
+	// Try to detect encoding - test common encodings
+	encodings := []struct {
+		name    string
+		decoder *charmap.Charmap
+	}{
+		{"windows-1251", charmap.Windows1251},
+		{"cp866", charmap.CodePage866},
+		{"iso-8859-5", charmap.ISO8859_5},
+		{"windows-1252", charmap.Windows1252},
+		{"koi8-r", charmap.KOI8R},
+	}
+
+	for _, enc := range encodings {
+		// Try to decode a sample
+		decoder := enc.decoder.NewDecoder()
+		_, err := decoder.Bytes(buf[:n])
+		if err == nil {
+			// Found a matching encoding, convert the entire file
+			if debug {
+				fmt.Fprintf(os.Stderr, "Detected input file encoding: %s (converting to UTF-8)\n", enc.name)
+			}
+			return transform.NewReader(file, enc.decoder.NewDecoder()), nil
+		}
+	}
+
+	// If we can't detect, assume Windows-1251 as default for non-UTF-8 files
+	if debug {
+		fmt.Fprintf(os.Stderr, "Assuming input file encoding: windows-1251 (converting to UTF-8)\n")
+	}
+	return transform.NewReader(file, charmap.Windows1251.NewDecoder()), nil
 }
 
 func buildConnectionString(params *AppParams) (string, error) {
