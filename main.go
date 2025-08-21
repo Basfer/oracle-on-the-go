@@ -341,6 +341,7 @@ func detectAndConvertEncoding(file *os.File, debug bool) (io.Reader, error) {
 	}
 
 	// If we can't detect, assume Windows-1251 as default for non-UTF-8 files
+
 	if debug {
 		fmt.Fprintf(os.Stderr, "Assuming encoding: windows-1251\n")
 	}

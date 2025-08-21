@@ -1,4 +1,4 @@
 package main
 
-const Version = "1.2.11+20250821103929"
+const Version = "1.2.12+20250821104056"
 
