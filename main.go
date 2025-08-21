@@ -313,6 +313,9 @@ func detectAndConvertEncoding(file *os.File, debug bool) (io.Reader, error) {
 	// Check if it's already valid UTF-8
 	if utf8.Valid(buf[:n]) {
 		// It's already UTF-8, return as is
+		if debug {
+			fmt.Fprintf(os.Stderr, "Input file encoding: UTF-8 (no conversion needed)\n")
+		}
 		return file, nil
 	}
 
@@ -334,16 +337,15 @@ func detectAndConvertEncoding(file *os.File, debug bool) (io.Reader, error) {
 		if err == nil {
 			// Found a matching encoding, convert the entire file
 			if debug {
-				fmt.Fprintf(os.Stderr, "Detected encoding: %s\n", enc.name)
+				fmt.Fprintf(os.Stderr, "Detected input file encoding: %s (converting to UTF-8)\n", enc.name)
 			}
 			return transform.NewReader(file, enc.decoder.NewDecoder()), nil
 		}
 	}
 
 	// If we can't detect, assume Windows-1251 as default for non-UTF-8 files
-
 	if debug {
-		fmt.Fprintf(os.Stderr, "Assuming encoding: windows-1251\n")
+		fmt.Fprintf(os.Stderr, "Assuming input file encoding: windows-1251 (converting to UTF-8)\n")
 	}
 	return transform.NewReader(file, charmap.Windows1251.NewDecoder()), nil
 }
