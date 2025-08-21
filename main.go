@@ -311,9 +311,7 @@ func detectAndConvertEncoding(file *os.File, debug bool) (io.Reader, error) {
 	file.Seek(0, 0)
 
 	// Check for UTF-8 BOM (EF BB BF)
-	hasBOM := false
 	if n >= 3 && buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF {
-		hasBOM = true
 		if debug {
 			fmt.Fprintf(os.Stderr, "Input file encoding: UTF-8 with BOM (removing BOM)\n")
 		}
