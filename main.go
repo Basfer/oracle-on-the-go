@@ -334,8 +334,8 @@ func detectAndConvertEncoding(file *os.File, debug bool) (io.Reader, error) {
 		name    string
 		decoder *charmap.Charmap
 	}{
-		{"cp866", charmap.CodePage866},
 		{"windows-1251", charmap.Windows1251},
+		{"cp866", charmap.CodePage866},
 		{"iso-8859-5", charmap.ISO8859_5},
 		{"windows-1252", charmap.Windows1252},
 		{"koi8-r", charmap.KOI8R},
